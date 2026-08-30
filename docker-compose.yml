@@ -1,0 +1,22 @@
+
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: navner-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: navner
+      POSTGRES_PASSWORD: navner_secret
+      POSTGRES_DB: navner_ai
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U navner -d navner_ai"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
