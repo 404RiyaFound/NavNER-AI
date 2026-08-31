@@ -10,14 +10,15 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import async_session, engine
 from app.models import Base
-from app.routers import incidents, map_state, telemetry
+from app.routers import analytics, incidents, map_state, telemetry
+from app.scheduler import start_scheduler, stop_scheduler
 from app.seed import seed_demo_data
 from app.websocket import manager
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Create database tables and seed demo data on startup."""
+    """Create database tables, seed demo data, and start scheduler on startup."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     print("✅ Database tables created.")
@@ -25,15 +26,20 @@ async def lifespan(app: FastAPI):
     async with async_session() as session:
         await seed_demo_data(session)
 
+    # Start the periodic risk evaluation scheduler (every 30 minutes)
+    start_scheduler()
+    print("✅ Risk evaluation scheduler started.")
+
     yield
 
+    stop_scheduler()
     await engine.dispose()
 
 
 app = FastAPI(
     title="NavNER-AI Backend",
-    description="AI-powered logistics intelligence platform for NER — Stage 1 API",
-    version="0.1.0",
+    description="AI-powered logistics intelligence platform for NER — Stage 1 & 2 API",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
@@ -54,6 +60,7 @@ app.mount("/uploads", StaticFiles(directory=settings.UPLOAD_DIR), name="uploads"
 app.include_router(telemetry.router)
 app.include_router(incidents.router)
 app.include_router(map_state.router)
+app.include_router(analytics.router)
 
 
 # ── WebSocket endpoint ─────────────────────────────────────────────────────────
@@ -72,4 +79,5 @@ async def websocket_endpoint(websocket: WebSocket):
 # ── Health check ───────────────────────────────────────────────────────────────
 @app.get("/health", tags=["system"])
 async def health_check():
-    return {"status": "ok", "service": "navner-ai-backend"}
+    return {"status": "ok", "service": "navner-ai-backend", "version": "0.2.0"}
+

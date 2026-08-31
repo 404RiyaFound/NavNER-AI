@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from geoalchemy2 import Geometry
 from sqlalchemy import (
+    BigInteger,
     Column,
     DateTime,
     Enum,
@@ -56,7 +57,15 @@ class IncidentStatus(str, enum.Enum):
     resolved = "resolved"
 
 
-# ── Models ─────────────────────────────────────────────────────────────────────
+class RiskLevel(str, enum.Enum):
+    """Composite risk classification for Stage 2 hazard prediction."""
+    LOW = "LOW"
+    MODERATE = "MODERATE"
+    HIGH = "HIGH"
+    CRITICAL = "CRITICAL"
+
+
+# ── Stage 1 Models ─────────────────────────────────────────────────────────────
 
 
 class User(Base):
@@ -124,3 +133,71 @@ class Telemetry(Base):
 
     # Relationships
     vehicle = relationship("Vehicle", back_populates="telemetry_records")
+
+
+# ── Stage 2 Models — AI Predictive Disruption Engine ───────────────────────────
+
+
+class SpatialGridCell(Base):
+    """H3-indexed hexagon grid cell with terrain features."""
+    __tablename__ = "spatial_grid_cells"
+
+    h3_index = Column(String(15), primary_key=True)
+    geom = Column(Geometry("POLYGON", srid=4326), nullable=False)
+    state = Column(String(50), nullable=False)
+    district = Column(String(50), nullable=False)
+    avg_slope_degrees = Column(Float, nullable=False, default=0.0)
+    elevation_meters = Column(Float, nullable=False, default=0.0)
+    landslide_susceptibility_base = Column(Float, default=0.0)  # 0.0 to 1.0
+
+    # Relationships
+    weather_records = relationship("WeatherTelemetryRecord", back_populates="grid_cell")
+    risk_assessment = relationship(
+        "SegmentRiskAssessment", back_populates="grid_cell", uselist=False
+    )
+
+
+class WeatherTelemetryRecord(Base):
+    """Real-time environmental telemetry per H3 cell."""
+    __tablename__ = "weather_telemetry"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    h3_index = Column(
+        String(15), ForeignKey("spatial_grid_cells.h3_index"), nullable=False
+    )
+    timestamp = Column(
+        DateTime(timezone=True), nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    rainfall_1h_mm = Column(Float, nullable=False, default=0.0)
+    rainfall_24h_mm = Column(Float, nullable=False, default=0.0)
+    soil_saturation_pct = Column(Float, nullable=False, default=0.0)
+    temperature_c = Column(Float, nullable=True)
+    surface_runoff_rate = Column(Float, nullable=True)
+
+    # Relationships
+    grid_cell = relationship("SpatialGridCell", back_populates="weather_records")
+
+
+class SegmentRiskAssessment(Base):
+    """ML-computed predictive disruption scores per H3 cell."""
+    __tablename__ = "segment_risk_assessments"
+
+    h3_index = Column(
+        String(15), ForeignKey("spatial_grid_cells.h3_index"), primary_key=True
+    )
+    last_evaluated = Column(
+        DateTime(timezone=True), nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+    )
+    landslide_risk_score = Column(Float, nullable=False, default=0.0)  # 0.00–1.00
+    flood_risk_score = Column(Float, nullable=False, default=0.0)      # 0.00–1.00
+    composite_risk_level = Column(
+        Enum(RiskLevel), nullable=False, default=RiskLevel.LOW
+    )
+    predicted_blockage_probability = Column(Float, nullable=False, default=0.0)
+    primary_contributing_factor = Column(String(100), nullable=True)
+
+    # Relationships
+    grid_cell = relationship("SpatialGridCell", back_populates="risk_assessment")
+

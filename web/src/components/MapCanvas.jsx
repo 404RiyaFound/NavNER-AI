@@ -1,6 +1,7 @@
 /**
  * Full-screen MapLibre GL canvas centered on North Eastern Region.
  * Renders vehicle and incident markers with popups.
+ * Exposes the map instance via onMapReady callback for overlay components.
  */
 import { useEffect, useRef } from 'react';
 import * as maplibregl from 'maplibre-gl';
@@ -10,7 +11,7 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 const VEHICLE_EMOJI = { truck: '🚛', ambulance: '🚑', utility: '🔧' };
 const INCIDENT_EMOJI = { flood: '🌊', landslide: '⛰️', road_damage: '🚧', bridge_collapse: '🌉' };
 
-export function MapCanvas({ vehicles, incidents, onIncidentClick }) {
+export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady }) {
   const mapContainer = useRef(null);
   const mapRef = useRef(null);
   const vehicleMarkersRef = useRef({});
@@ -54,6 +55,11 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick }) {
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 200 }), 'bottom-left');
 
     mapRef.current = map;
+
+    // Notify parent when map is ready (after style loads)
+    map.on('load', () => {
+      onMapReady?.(map);
+    });
 
     return () => {
       map.remove();

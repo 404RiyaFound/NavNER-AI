@@ -614,3 +614,356 @@ html, body, #root {
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
+
+/* ── Stage 2: Emergency Alert Banner ──────────────────────────────────────── */
+.alert-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 20px;
+  gap: 12px;
+  font-size: 13px;
+  font-weight: 500;
+  z-index: 90;
+  animation: alert-slide-down 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.alert-banner.critical {
+  background: linear-gradient(90deg, rgba(229, 57, 53, 0.15) 0%, rgba(229, 57, 53, 0.08) 100%);
+  border-bottom: 1px solid rgba(229, 57, 53, 0.35);
+  color: #ff6b6b;
+}
+
+.alert-banner.high {
+  background: linear-gradient(90deg, rgba(251, 140, 0, 0.15) 0%, rgba(251, 140, 0, 0.08) 100%);
+  border-bottom: 1px solid rgba(251, 140, 0, 0.35);
+  color: #ffab40;
+}
+
+.alert-banner-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.alert-banner-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+  animation: pulse-alert-icon 1.5s ease-in-out infinite;
+}
+
+.alert-banner-text {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.alert-banner-text strong {
+  white-space: nowrap;
+}
+
+.alert-banner-corridors {
+  font-size: 12px;
+  opacity: 0.75;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.alert-banner-dismiss {
+  background: none;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: inherit;
+  cursor: pointer;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  opacity: 0.6;
+  transition: all var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.alert-banner-dismiss:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+@keyframes alert-slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse-alert-icon {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.2); }
+}
+
+/* ── Stage 2: Hazard Controls Panel ──────────────────────────────────────── */
+.hazard-controls {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 55;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  min-width: 260px;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  animation: fade-in-up 0.3s ease;
+}
+
+/* Toggle row */
+.hazard-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hazard-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  cursor: default;
+}
+
+.hazard-toggle-icon {
+  font-size: 16px;
+}
+
+.hazard-toggle-btn {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all var(--transition-normal);
+  padding: 0;
+}
+
+.hazard-toggle-btn.active {
+  background: var(--color-accent-blue);
+  border-color: var(--color-accent-blue);
+}
+
+.hazard-toggle-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 18px;
+  height: 18px;
+  background: white;
+  border-radius: 50%;
+  transition: transform var(--transition-normal);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.hazard-toggle-btn.active .hazard-toggle-knob {
+  transform: translateX(20px);
+}
+
+/* Slider */
+.hazard-slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.hazard-slider-label {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+}
+
+.hazard-slider-label strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.hazard-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  background: linear-gradient(90deg, var(--color-accent-green), var(--color-accent-amber), var(--color-accent-red));
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+
+.hazard-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  background: var(--color-text-primary);
+  border-radius: 50%;
+  border: 2px solid var(--color-accent-blue);
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.4);
+  transition: box-shadow var(--transition-fast);
+}
+
+.hazard-slider::-webkit-slider-thumb:hover {
+  box-shadow: 0 0 12px rgba(59, 130, 246, 0.6);
+}
+
+.hazard-slider::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  background: var(--color-text-primary);
+  border-radius: 50%;
+  border: 2px solid var(--color-accent-blue);
+  cursor: pointer;
+}
+
+.hazard-slider-marks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--color-text-muted);
+}
+
+/* Legend */
+.hazard-legend {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 4px;
+  border-top: 1px solid var(--color-border);
+}
+
+.hazard-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.hazard-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.hazard-legend-text {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  letter-spacing: 0.3px;
+}
+
+/* ── Stage 2: Hazard Popup ───────────────────────────────────────────────── */
+.hazard-popup {
+  padding: 14px 16px;
+  background: var(--color-bg-panel);
+  border: 1px solid var(--color-border-active);
+  border-radius: var(--radius-md);
+  backdrop-filter: blur(16px);
+  min-width: 240px;
+  max-width: 300px;
+}
+
+.hazard-popup-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.hazard-risk-badge {
+  font-size: 10px;
+  font-weight: 700;
+  color: white;
+  padding: 3px 10px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.hazard-popup-district {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.hazard-popup-threat {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.hazard-popup-metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  margin-bottom: 10px;
+}
+
+.hazard-metric {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.hazard-metric-label {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.hazard-metric-value {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.hazard-popup-details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--color-text-muted);
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.hazard-popup-details span {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 10px;
+}
+
+/* ── Utility animation ────────────────────────────────────────────────────── */
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+

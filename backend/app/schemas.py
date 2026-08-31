@@ -81,3 +81,65 @@ class VehicleResponse(BaseModel):
 class MapStateResponse(BaseModel):
     vehicles: list[VehicleResponse]
     incidents: list[IncidentResponse]
+
+
+# ── Stage 2 — Hazard Analytics ─────────────────────────────────────────────────
+
+
+class HazardFeatureProperties(BaseModel):
+    """Properties of a single hazard GeoJSON feature."""
+    h3_index: str
+    state: str
+    district: str
+    risk_level: str
+    landslide_prob: float
+    flood_prob: float
+    composite_score: float
+    predicted_blockage_probability: float
+    primary_threat: str | None = None
+    avg_slope_degrees: float | None = None
+    elevation_meters: float | None = None
+    rainfall_1h_mm: float | None = None
+    rainfall_24h_mm: float | None = None
+    soil_saturation_pct: float | None = None
+    action_required: str | None = None
+
+
+class HazardFeatureGeometry(BaseModel):
+    """GeoJSON geometry object."""
+    type: str = "Polygon"
+    coordinates: list
+
+
+class HazardFeature(BaseModel):
+    """A single GeoJSON Feature for the hazard map."""
+    type: str = "Feature"
+    geometry: HazardFeatureGeometry
+    properties: HazardFeatureProperties
+
+
+class HazardMapResponse(BaseModel):
+    """GeoJSON FeatureCollection for the hazard heatmap overlay."""
+    type: str = "FeatureCollection"
+    generated_at: datetime
+    features: list[HazardFeature]
+
+
+class EvaluateGridRequest(BaseModel):
+    """Request body for batch risk inference."""
+    h3_indices: list[str] | None = Field(
+        None,
+        description="Optional list of H3 cell IDs to evaluate. "
+                    "If empty/null, evaluates all active corridor cells.",
+    )
+
+
+class EvaluateGridResponse(BaseModel):
+    """Summary result of a batch risk evaluation."""
+    evaluated_cells: int
+    critical_count: int
+    high_count: int
+    moderate_count: int
+    low_count: int
+    timestamp: datetime
+
