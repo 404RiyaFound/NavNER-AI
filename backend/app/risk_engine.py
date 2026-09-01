@@ -17,9 +17,9 @@ from sklearn.preprocessing import StandardScaler
 # ── Risk thresholds (from PRD §4C) ────────────────────────────────────────────
 RISK_THRESHOLDS = {
     "LOW": (0.0, 0.35),
-    "MODERATE": (0.35, 0.65),
-    "HIGH": (0.65, 0.85),
-    "CRITICAL": (0.85, 1.01),
+    "MODERATE": (0.35, 0.60),
+    "HIGH": (0.60, 0.80),
+    "CRITICAL": (0.80, 1.01),
 }
 
 # Action mapping per risk level
