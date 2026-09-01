@@ -24,7 +24,13 @@ from app.models import (
     SpatialGridCell,
 )
 from app.risk_engine import risk_engine
-from app.weather_service import fetch_weather_for_grid
+from app.weather_service import (
+    STALE_TOLERANCE_HOURS,
+    STATUS_OK,
+    fetch_weather_for_grid,
+    is_within_stale_tolerance,
+    last_known_reading,
+)
 from app.websocket import manager
 
 logger = logging.getLogger(__name__)
@@ -41,6 +47,8 @@ async def run_risk_evaluation() -> dict:
     counts = {"LOW": 0, "MODERATE": 0, "HIGH": 0, "CRITICAL": 0}
     evaluated = 0
     critical_indices = []
+    skipped = 0
+    stale = 0
 
     async with async_session() as db:
         # Fetch all grid cells
@@ -66,6 +74,21 @@ async def run_risk_evaluation() -> dict:
 
         for cell, (lat, lng), weather in zip(cells, centroids, weather_by_cell):
             try:
+                # An absent reading must not be scored as calm weather. Fall back
+                # to the most recent stored observation if it is recent enough,
+                # otherwise leave the existing assessment alone — overwriting it
+                # with a fabricated LOW destroys the last known good state and
+                # drops the routing hazard penalty on a genuinely unsafe cell.
+                effective_at = now
+                if weather.get("status") != STATUS_OK:
+                    fallback, observed_at = await last_known_reading(db, cell.h3_index)
+                    if not is_within_stale_tolerance(observed_at, now):
+                        skipped += 1
+                        continue
+                    weather = fallback
+                    effective_at = observed_at
+                    stale += 1
+
                 # Build terrain data from cell attributes
                 terrain = {
                     "avg_slope_degrees": cell.avg_slope_degrees,
@@ -81,7 +104,7 @@ async def run_risk_evaluation() -> dict:
                 # Upsert risk assessment
                 existing = await db.get(SegmentRiskAssessment, cell.h3_index)
                 if existing:
-                    existing.last_evaluated = now
+                    existing.last_evaluated = effective_at
                     existing.landslide_risk_score = result["landslide_risk_score"]
                     existing.flood_risk_score = result["flood_risk_score"]
                     existing.composite_risk_level = risk_level
@@ -90,7 +113,7 @@ async def run_risk_evaluation() -> dict:
                 else:
                     db.add(SegmentRiskAssessment(
                         h3_index=cell.h3_index,
-                        last_evaluated=now,
+                        last_evaluated=effective_at,
                         landslide_risk_score=result["landslide_risk_score"],
                         flood_risk_score=result["flood_risk_score"],
                         composite_risk_level=risk_level,
@@ -138,6 +161,9 @@ async def run_risk_evaluation() -> dict:
 
     summary = {
         "evaluated_cells": evaluated,
+        # Non-zero values here mean the map is not a current picture.
+        "stale_cells": stale,
+        "skipped_cells": skipped,
         "critical_count": counts["CRITICAL"],
         "high_count": counts["HIGH"],
         "moderate_count": counts["MODERATE"],
@@ -165,6 +191,13 @@ async def run_risk_evaluation() -> dict:
         evaluated, counts["CRITICAL"], counts["HIGH"],
         counts["MODERATE"], counts["LOW"],
     )
+    if stale or skipped:
+        logger.warning(
+            "[Scheduler] Weather unavailable for %d cells — %d re-scored from "
+            "stored readings within %dh, %d left at their previous assessment. "
+            "Risk scores are not a current picture.",
+            stale + skipped, stale, STALE_TOLERANCE_HOURS, skipped,
+        )
 
     return summary
 

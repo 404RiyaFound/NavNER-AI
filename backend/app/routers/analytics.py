@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import h3
 from fastapi import APIRouter, Depends, Query
@@ -28,7 +28,13 @@ from app.schemas import (
     HazardFeatureProperties,
     HazardMapResponse,
 )
-from app.weather_service import fetch_weather_for_grid
+from app.weather_service import (
+    STALE_TOLERANCE_HOURS,
+    STATUS_OK,
+    fetch_weather_for_grid,
+    is_within_stale_tolerance,
+    last_known_reading,
+)
 from app.websocket import manager
 
 logger = logging.getLogger(__name__)
@@ -134,14 +140,28 @@ async def get_hazard_map(
                 rainfall_1h_mm=latest_weather.rainfall_1h_mm if latest_weather else None,
                 rainfall_24h_mm=latest_weather.rainfall_24h_mm if latest_weather else None,
                 soil_saturation_pct=latest_weather.soil_saturation_pct if latest_weather else None,
+                last_evaluated=row.last_evaluated,
                 action_required=action_map.get(risk_level, "NORMAL_TRANSIT"),
             ),
         )
         features.append(feature)
 
+    # Freshness summary. A client showing a green map during an ingestion
+    # outage is the failure this guards against, so the age of the data is part
+    # of the response rather than something the caller has to infer.
+    generated_at = datetime.now(timezone.utc)
+    evaluated_at = [
+        f.properties.last_evaluated
+        for f in features
+        if f.properties.last_evaluated is not None
+    ]
+    staleness_cutoff = generated_at - timedelta(hours=STALE_TOLERANCE_HOURS)
+
     return HazardMapResponse(
-        generated_at=datetime.now(timezone.utc),
+        generated_at=generated_at,
         features=features,
+        oldest_evaluation=min(evaluated_at) if evaluated_at else None,
+        stale_feature_count=sum(1 for t in evaluated_at if t < staleness_cutoff),
     )
 
 
@@ -164,6 +184,8 @@ async def evaluate_grid(
     now = datetime.now(timezone.utc)
     counts = {"LOW": 0, "MODERATE": 0, "HIGH": 0, "CRITICAL": 0}
     evaluated = 0
+    skipped = 0
+    stale = 0
 
     # Determine which cells to evaluate
     stmt = select(SpatialGridCell)
@@ -180,17 +202,30 @@ async def evaluate_grid(
 
     for cell, (lat, lng), weather in zip(cells, centroids, weather_by_cell):
         try:
-            # Store weather telemetry record
-            weather_record = WeatherTelemetryRecord(
-                h3_index=cell.h3_index,
-                timestamp=now,
-                rainfall_1h_mm=weather["rainfall_1h_mm"],
-                rainfall_24h_mm=weather["rainfall_24h_mm"],
-                soil_saturation_pct=weather["soil_saturation_pct"],
-                temperature_c=weather["temperature_c"],
-                surface_runoff_rate=weather["surface_runoff_rate"],
-            )
-            db.add(weather_record)
+            # An absent reading is not a calm-weather reading. Re-score from the
+            # most recent stored observation when it is recent enough, otherwise
+            # leave the cell's existing assessment untouched.
+            effective_at = now
+            if weather.get("status") != STATUS_OK:
+                fallback, observed_at = await last_known_reading(db, cell.h3_index)
+                if not is_within_stale_tolerance(observed_at, now):
+                    skipped += 1
+                    continue
+                weather = fallback
+                effective_at = observed_at
+                stale += 1
+            else:
+                # Only live observations are persisted, so the stored history
+                # never contains synthesised values.
+                db.add(WeatherTelemetryRecord(
+                    h3_index=cell.h3_index,
+                    timestamp=now,
+                    rainfall_1h_mm=weather["rainfall_1h_mm"],
+                    rainfall_24h_mm=weather["rainfall_24h_mm"],
+                    soil_saturation_pct=weather["soil_saturation_pct"],
+                    temperature_c=weather["temperature_c"],
+                    surface_runoff_rate=weather["surface_runoff_rate"],
+                ))
 
             # Build terrain dict
             terrain = {
@@ -206,7 +241,7 @@ async def evaluate_grid(
             # Upsert risk assessment
             existing = await db.get(SegmentRiskAssessment, cell.h3_index)
             if existing:
-                existing.last_evaluated = now
+                existing.last_evaluated = effective_at
                 existing.landslide_risk_score = result["landslide_risk_score"]
                 existing.flood_risk_score = result["flood_risk_score"]
                 existing.composite_risk_level = risk_level
@@ -215,7 +250,7 @@ async def evaluate_grid(
             else:
                 db.add(SegmentRiskAssessment(
                     h3_index=cell.h3_index,
-                    last_evaluated=now,
+                    last_evaluated=effective_at,
                     landslide_risk_score=result["landslide_risk_score"],
                     flood_risk_score=result["flood_risk_score"],
                     composite_risk_level=risk_level,
@@ -231,11 +266,20 @@ async def evaluate_grid(
 
     await db.commit()
 
+    if stale or skipped:
+        logger.warning(
+            "Weather unavailable for %d cells — %d re-scored from stored "
+            "readings within %dh, %d left at their previous assessment.",
+            stale + skipped, stale, STALE_TOLERANCE_HOURS, skipped,
+        )
+
     # Broadcast update to dashboard clients
     await manager.broadcast({
         "event": "risk_update",
         "data": {
             "evaluated_cells": evaluated,
+            "stale_cells": stale,
+            "skipped_cells": skipped,
             "critical_count": counts["CRITICAL"],
             "high_count": counts["HIGH"],
             "moderate_count": counts["MODERATE"],
@@ -246,6 +290,8 @@ async def evaluate_grid(
 
     return EvaluateGridResponse(
         evaluated_cells=evaluated,
+        stale_cells=stale,
+        skipped_cells=skipped,
         critical_count=counts["CRITICAL"],
         high_count=counts["HIGH"],
         moderate_count=counts["MODERATE"],

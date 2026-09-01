@@ -105,6 +105,10 @@ class HazardFeatureProperties(BaseModel):
     rainfall_24h_mm: float | None = None
     soil_saturation_pct: float | None = None
     action_required: str | None = None
+    # When the reading behind this score was observed. Older than the
+    # evaluation interval means the cell was scored from stored data or not
+    # re-scored at all, so the risk level may not reflect current conditions.
+    last_evaluated: datetime | None = None
 
 
 class HazardFeatureGeometry(BaseModel):
@@ -125,6 +129,10 @@ class HazardMapResponse(BaseModel):
     type: str = "FeatureCollection"
     generated_at: datetime
     features: list[HazardFeature]
+    # Age of the oldest score in this collection, so a client can tell a live
+    # picture from one built on stored readings during an ingestion outage.
+    oldest_evaluation: datetime | None = None
+    stale_feature_count: int = 0
 
 
 class EvaluateGridRequest(BaseModel):
@@ -139,6 +147,11 @@ class EvaluateGridRequest(BaseModel):
 class EvaluateGridResponse(BaseModel):
     """Summary result of a batch risk evaluation."""
     evaluated_cells: int
+    # Cells whose score came from stored rather than live readings, and
+    # cells left at their previous assessment because no usable reading
+    # existed. Both non-zero means the map is not a current picture.
+    stale_cells: int = 0
+    skipped_cells: int = 0
     critical_count: int
     high_count: int
     moderate_count: int

@@ -35,6 +35,17 @@ MAX_CONCURRENT_REQUESTS = 8
 MAX_RETRIES = 3
 BACKOFF_BASE_SECONDS = 1.5
 
+# Reading provenance. Callers must branch on this rather than trusting the
+# numbers: an unreachable upstream used to be indistinguishable from calm
+# weather, which drove every cell to LOW and cleared the hazard map.
+STATUS_OK = "ok"
+STATUS_STALE = "stale"
+STATUS_UNAVAILABLE = "unavailable"
+
+# How old a stored reading may be and still be worth re-scoring from. Beyond
+# this a cell is left at its previous assessment rather than re-scored.
+STALE_TOLERANCE_HOURS = 6
+
 
 async def fetch_weather_for_point(
     lat: float,
@@ -87,6 +98,7 @@ async def fetch_weather_for_point(
         surface_runoff = rainfall_1h * (0.3 + 0.7 * saturation_factor)
 
         return {
+            "status": STATUS_OK,
             "rainfall_1h_mm": round(float(rainfall_1h), 2),
             "rainfall_24h_mm": round(float(rainfall_24h), 2),
             "soil_saturation_pct": round(float(soil_saturation_pct), 2),
@@ -103,14 +115,11 @@ async def fetch_weather_for_point(
     except Exception as exc:
         logger.warning("Unexpected error fetching weather for (%s, %s): %s", lat, lng, exc)
 
-    # Fallback: return zeros so the pipeline doesn't break
-    return {
-        "rainfall_1h_mm": 0.0,
-        "rainfall_24h_mm": 0.0,
-        "soil_saturation_pct": 0.0,
-        "temperature_c": 20.0,
-        "surface_runoff_rate": 0.0,
-    }
+    # No fabricated readings. Zeros here were read downstream as a genuine
+    # "no rain, dry soil" observation, so an Open-Meteo outage silently
+    # rewrote every cell to LOW and destroyed the previous scores. Callers
+    # must decide what to do with an absent reading.
+    return {"status": STATUS_UNAVAILABLE}
 
 
 async def fetch_weather_batch(
@@ -226,3 +235,48 @@ async def fetch_weather_for_grid(
         for idx in groups[key]:
             out[idx] = weather
     return out
+
+
+async def last_known_reading(db, h3_index: str):
+    """Most recent stored reading for a cell, as a reading dict.
+
+    Returns ``(reading, observed_at)``, or ``(None, None)`` when the cell has no
+    stored telemetry. The reading carries ``status = STATUS_STALE`` so a caller
+    cannot mistake it for a live observation.
+    """
+    # Imported here: models imports nothing from this module, but keeping the
+    # dependency local avoids making the whole model layer a hard requirement
+    # for the plain fetch helpers above.
+    from sqlalchemy import select
+
+    from app.models import WeatherTelemetryRecord
+
+    record = (
+        await db.execute(
+            select(WeatherTelemetryRecord)
+            .where(WeatherTelemetryRecord.h3_index == h3_index)
+            .order_by(WeatherTelemetryRecord.timestamp.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if record is None:
+        return None, None
+
+    return {
+        "status": STATUS_STALE,
+        "rainfall_1h_mm": record.rainfall_1h_mm,
+        "rainfall_24h_mm": record.rainfall_24h_mm,
+        "soil_saturation_pct": record.soil_saturation_pct,
+        "temperature_c": record.temperature_c,
+        "surface_runoff_rate": record.surface_runoff_rate,
+    }, record.timestamp
+
+
+def is_within_stale_tolerance(observed_at, now) -> bool:
+    """True when a stored reading is recent enough to re-score from."""
+    from datetime import timedelta
+
+    if observed_at is None:
+        return False
+    return (now - observed_at) <= timedelta(hours=STALE_TOLERANCE_HOURS)
