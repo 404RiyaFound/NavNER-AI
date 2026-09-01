@@ -175,6 +175,9 @@ async def evaluate_grid(
     weather_by_cell = await fetch_weather_for_grid(centroids)
 
     for cell, (lat, lng), weather in zip(cells, centroids, weather_by_cell):
+        if weather is None:
+            continue
+
         try:
             # Store weather telemetry record
             weather_record = WeatherTelemetryRecord(

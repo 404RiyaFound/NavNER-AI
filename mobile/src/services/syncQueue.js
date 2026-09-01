@@ -122,10 +122,42 @@ export async function syncQueue() {
       synced++;
     } catch (err) {
       // Network still down — stop trying
-      console.log('[SyncQueue] Sync failed for:', report._id, err.message);
-      break;
     }
   }
+  
+  // Bidirectional sync: Pull down state for offline viewing
+  await fetchAndCacheMapState();
 
   return synced;
+}
+
+const MAP_STATE_KEY = '@navner_map_state';
+
+/**
+ * Fetch active map state (vehicles, incidents) from the backend and cache it locally.
+ */
+export async function fetchAndCacheMapState() {
+  try {
+    const response = await fetch(`${API_URL}/api/v1/map-state`);
+    if (response.ok) {
+      const data = await response.json();
+      await AsyncStorage.setItem(MAP_STATE_KEY, JSON.stringify(data));
+      return data;
+    }
+  } catch (err) {
+    console.log('[SyncQueue] Failed to fetch map state:', err.message);
+  }
+  return null;
+}
+
+/**
+ * Get the cached map state for offline viewing.
+ */
+export async function getCachedMapState() {
+  try {
+    const raw = await AsyncStorage.getItem(MAP_STATE_KEY);
+    return raw ? JSON.parse(raw) : { incidents: [], vehicles: [] };
+  } catch {
+    return { incidents: [], vehicles: [] };
+  }
 }

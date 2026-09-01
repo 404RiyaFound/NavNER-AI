@@ -102,6 +102,32 @@ button { cursor: pointer; }
   flex: 1;
   overflow: hidden;
   min-height: 0;
+  /* Positioning context for the collapsed fleet-drawer toggle. Without it the
+     toggle's `top: 16px` resolves against the document, putting the button
+     behind the header where it is invisible and unclickable — so collapsing the
+     drawer was a one-way trip. */
+  position: relative;
+}
+
+/* Pin each region to its own column. Relying on auto placement breaks when the
+   drawer collapses: the drawer is replaced by an absolutely-positioned toggle,
+   which is out of flow and occupies no track, so the map auto-placed into the
+   380px left column and the detail panel into the 1fr centre — squeezing the map
+   to 380px and leaving ~750px of dead space. */
+.app-body > .fleet-drawer      { grid-column: 1; }
+.app-body > .map-wrapper       { grid-column: 2; }
+.app-body > .trip-detail-panel { grid-column: 3; }
+
+/* Collapsed, give the drawer's column to the map rather than leaving a 380px
+   gap — reclaiming that space is the point of collapsing it. */
+.app-body:has(> .fleet-drawer-toggle-float) {
+  grid-template-columns: 0 1fr var(--right-panel-w);
+}
+
+/* Collapsed, the map starts at x=0, so the hazard controls would land on the
+   same corner as the reopen toggle. Drop them below it. */
+.app-body:has(> .fleet-drawer-toggle-float) .hazard-controls {
+  top: 68px;
 }
 
 .map-wrapper {

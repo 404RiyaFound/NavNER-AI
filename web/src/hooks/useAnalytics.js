@@ -19,11 +19,17 @@ export function useAnalytics({ enabled = true, refreshInterval = 30000 } = {}) {
     if (!enabled) return;
     try {
       setLoading(true);
+      const fetchJson = async (url) => {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP error ${res.status}`);
+        return res.json();
+      };
+      
       const [cs, dp, fs, ra] = await Promise.all([
-        fetch(`${API_BASE}/api/v1/dashboard/consignment-state`).then(r => r.json()),
-        fetch(`${API_BASE}/api/v1/dashboard/delay-prediction`).then(r => r.json()),
-        fetch(`${API_BASE}/api/v1/dashboard/fleet-summary`).then(r => r.json()),
-        fetch(`${API_BASE}/api/v1/dashboard/reroute-audit?hours=24`).then(r => r.json()),
+        fetchJson(`${API_BASE}/api/v1/dashboard/consignment-state`),
+        fetchJson(`${API_BASE}/api/v1/dashboard/delay-prediction`),
+        fetchJson(`${API_BASE}/api/v1/dashboard/fleet-summary`),
+        fetchJson(`${API_BASE}/api/v1/dashboard/reroute-audit?hours=24`),
       ]);
       setConsignmentState(cs);
       setDelayPrediction(dp);

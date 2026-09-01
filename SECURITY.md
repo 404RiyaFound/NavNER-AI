@@ -7,6 +7,6 @@ Please check the repository for the latest supported versions. We recommend alwa
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability within NavNER-AI, please do NOT create a public issue. 
-Instead, please report it privately by sending an email to the project maintainers or using the GitHub Security Advisories feature.
+Instead, please report it privately by sending an email to the project maintainers or using the [GitHub Security Advisories](https://github.com/YASHK-arch/NavNER-AI/security/advisories/new) feature.
 
 We take security issues seriously and will respond to reports as quickly as possible.

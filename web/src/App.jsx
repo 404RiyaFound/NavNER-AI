@@ -94,10 +94,18 @@ function App() {
     }
   }, []);
 
+  const [tripInstructions, setTripInstructions] = useState({}); // tripId -> instructions
+
   // Stage 3: Route actions
   const handleAcceptRoute = useCallback(async (tripId) => {
     try {
-      await triggerReroute(tripId, true, 0.60);
+      const result = await triggerReroute(tripId, true, 0.60);
+      if (result && result.turn_by_turn_instructions) {
+        setTripInstructions(prev => ({
+          ...prev,
+          [tripId]: result.turn_by_turn_instructions
+        }));
+      }
     } catch (err) {
       console.error('[App] Accept route error:', err);
     }
@@ -200,6 +208,7 @@ function App() {
           {/* RIGHT: Trip Detail Panel — logistics mockup right column */}
           <TripDetailPanel
             trip={selectedTrip}
+            instructions={selectedTrip ? tripInstructions[selectedTrip.trip_id] : null}
             onClose={() => setSelectedTripId(null)}
             onAcceptRoute={handleAcceptRoute}
             onRevertRoute={handleRevertRoute}

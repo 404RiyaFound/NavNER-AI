@@ -4,4 +4,12 @@ import { defineConfig } from 'vite'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  optimizeDeps: {
+    // maplibre-gl loads its tile-parsing web worker from a path relative to its
+    // own entry. Vite's dep optimizer rewrites the entry into .vite/deps/ but
+    // does not emit the sibling worker, so the request 404s and the map renders
+    // a blank canvas with no error. Excluding it keeps the package served from
+    // node_modules, where the relative worker path resolves.
+    exclude: ['maplibre-gl'],
+  },
 })
