@@ -8,3 +8,9 @@ websockets==13.0
 pydantic-settings==2.5.2
 python-dotenv==1.0.1
 aiofiles==24.1.0
+# Stage 2 — AI Predictive Disruption Engine
+scikit-learn>=1.5.0
+numpy>=1.26.0
+h3>=3.7.7
+httpx>=0.27.0
+apscheduler>=3.10.4
