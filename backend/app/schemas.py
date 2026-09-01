@@ -143,3 +143,67 @@ class EvaluateGridResponse(BaseModel):
     low_count: int
     timestamp: datetime
 
+
+# ── Stage 3 — Dynamic Routing & Fleet Optimization ────────────────────────────
+
+
+class RouteCalculateRequest(BaseModel):
+    """Request payload for route calculation / recalculation."""
+    trip_id: uuid.UUID
+    avoid_hazards: bool = True
+    max_hazard_tolerance: float = Field(0.60, ge=0.0, le=1.0)
+
+
+class TurnByTurnStep(BaseModel):
+    """A single step in turn-by-turn navigation instructions."""
+    step: int
+    instruction: str
+    distance_km: float
+
+
+class RouteGeoJSON(BaseModel):
+    """GeoJSON LineString for a computed route."""
+    type: str = "LineString"
+    coordinates: list[list[float]]
+
+
+class RouteCalculateResponse(BaseModel):
+    """Response from the route calculation endpoint."""
+    status: str  # 'REROUTED_SUCCESSFULLY', 'ROUTE_CALCULATED', 'NO_ROUTE_FOUND'
+    total_distance_km: float
+    estimated_duration_min: float
+    previous_duration_min: float | None = None
+    delay_minutes: float | None = None
+    avoided_hazards_count: int = 0
+    route_geojson: RouteGeoJSON
+    turn_by_turn_instructions: list[TurnByTurnStep]
+
+
+class FleetTripResponse(BaseModel):
+    """Single trip in the fleet status feed."""
+    trip_id: uuid.UUID
+    vehicle_id: uuid.UUID
+    vehicle_name: str
+    origin_name: str
+    dest_name: str
+    commodity_type: str
+    priority_level: str
+    status: str
+    estimated_arrival: datetime | None = None
+    last_rerouted_at: datetime | None = None
+    delay_minutes: int | None = None
+    original_route: RouteGeoJSON | None = None
+    current_route: RouteGeoJSON | None = None
+
+    class Config:
+        from_attributes = True
+
+
+class FleetStatusResponse(BaseModel):
+    """Full fleet status feed for the command center."""
+    active_trips: list[FleetTripResponse]
+    total_active: int
+    rerouted_count: int
+    emergency_count: int
+
+

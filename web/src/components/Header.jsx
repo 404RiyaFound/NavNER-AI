@@ -1,7 +1,7 @@
 /**
- * Header component with branding, live stats, and WebSocket status.
+ * Header component with branding, live stats, fleet status, and WebSocket status.
  */
-export function Header({ vehicleCount, incidentCount, isConnected }) {
+export function Header({ vehicleCount, incidentCount, isConnected, fleetData }) {
   return (
     <header className="header">
       <div className="header-brand">
@@ -24,6 +24,24 @@ export function Header({ vehicleCount, incidentCount, isConnected }) {
           <span className="stat-count">{incidentCount}</span>
           <span className="stat-label">Incidents</span>
         </div>
+
+        {/* Stage 3: Fleet stats */}
+        {fleetData && (
+          <>
+            <div className="stat-item">
+              <span className="stat-dot green"></span>
+              <span className="stat-count">{fleetData.total_active}</span>
+              <span className="stat-label">Active Trips</span>
+            </div>
+            {fleetData.rerouted_count > 0 && (
+              <div className="stat-item stat-item-alert">
+                <span className="stat-dot amber"></span>
+                <span className="stat-count">{fleetData.rerouted_count}</span>
+                <span className="stat-label">Rerouted</span>
+              </div>
+            )}
+          </>
+        )}
 
         <div className={`connection-status ${isConnected ? 'connected' : 'disconnected'}`}>
           <span className={`stat-dot ${isConnected ? 'green' : 'red'}`}></span>

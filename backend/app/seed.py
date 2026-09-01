@@ -1,6 +1,6 @@
 """Seed the database with demo data for development."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import h3
 from geoalchemy2.functions import ST_GeomFromText, ST_MakePoint
@@ -8,15 +8,21 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    CommodityType,
     Incident,
     IncidentType,
     RiskLevel,
+    RoadNetworkEdge,
+    RoadStatus,
     SegmentRiskAssessment,
     SpatialGridCell,
+    TripPriority,
+    TripStatus,
     User,
     UserRole,
     Vehicle,
     VehicleStatus,
+    VehicleTrip,
     VehicleType,
     WeatherTelemetryRecord,
 )
@@ -118,6 +124,143 @@ INITIAL_RISK_DATA = {
     "West Tripura": (0.06, 0.15, "LOW", 0.05, "Normal conditions — flat terrain"),
     "Cachar": (0.18, 0.52, "MODERATE", 0.42, "Sustained flooding — Barak Valley low elevation"),
 }
+
+
+# ── Stage 3: Road Network Graph Data ──────────────────────────────────────────
+
+# Key NER road network nodes (cities/towns/junctions)
+NER_ROAD_NODES: dict[int, dict] = {
+    1:  {"name": "Guwahati Hub",       "lat": 26.1445, "lng": 91.7362},
+    2:  {"name": "Nongpoh",            "lat": 25.8920, "lng": 91.8770},
+    3:  {"name": "Shillong",           "lat": 25.5788, "lng": 91.8933},
+    4:  {"name": "Tezpur",             "lat": 26.6338, "lng": 92.8000},
+    5:  {"name": "Nagaon",             "lat": 26.3500, "lng": 92.6900},
+    6:  {"name": "Dibrugarh",          "lat": 27.4728, "lng": 94.9120},
+    7:  {"name": "Jorhat",             "lat": 26.7509, "lng": 94.2037},
+    8:  {"name": "Imphal",             "lat": 24.8170, "lng": 93.9368},
+    9:  {"name": "Kohima",             "lat": 25.6700, "lng": 94.1100},
+    10: {"name": "Dimapur",            "lat": 25.9042, "lng": 93.7271},
+    11: {"name": "Silchar",            "lat": 24.8333, "lng": 92.7789},
+    12: {"name": "Aizawl",             "lat": 23.7271, "lng": 92.7176},
+    13: {"name": "Agartala",           "lat": 23.8315, "lng": 91.2868},
+    14: {"name": "Gangtok",            "lat": 27.3314, "lng": 88.6138},
+    15: {"name": "Siliguri",           "lat": 26.7271, "lng": 88.3953},
+    16: {"name": "Churachandpur",      "lat": 24.3330, "lng": 93.6830},
+    17: {"name": "Lumding Junction",   "lat": 25.7500, "lng": 93.1700},
+    18: {"name": "Haflong",            "lat": 25.1650, "lng": 93.0170},
+    19: {"name": "Tinsukia",           "lat": 27.4890, "lng": 95.3560},
+    20: {"name": "Numaligarh",         "lat": 26.6200, "lng": 93.7200},
+    21: {"name": "Mokokchung",         "lat": 26.3220, "lng": 94.5180},
+    22: {"name": "Nongstoin",          "lat": 25.5200, "lng": 91.2650},
+    23: {"name": "Tura",               "lat": 25.5150, "lng": 90.2170},
+    24: {"name": "Umiam (Barapani)",   "lat": 25.6751, "lng": 91.5860},
+}
+
+# Directed road network edges (bidirectional added as two edges)
+# Each tuple: (source, target, road_name, road_class, length_km, base_speed_kmh, hazard_penalty)
+# Coordinates are simplified [lng, lat] waypoints for LineString geometry
+NER_ROAD_EDGES = [
+    # Guwahati → Nongpoh → Shillong (NH6)
+    (1, 24, "NH6", "NH", 50.0, 45.0, 0.0,
+     [[91.7362, 26.1445], [91.72, 25.95], [91.5860, 25.6751]]),
+    (24, 3, "NH6", "NH", 30.0, 35.0, 0.65,
+     [[91.5860, 25.6751], [91.75, 25.62], [91.8933, 25.5788]]),
+    # Alternate Guwahati → Nongpoh → Shillong via bypass
+    (1, 2, "NH6-Bypass", "SH", 55.0, 40.0, 0.0,
+     [[91.7362, 26.1445], [91.80, 26.00], [91.8770, 25.8920]]),
+    (2, 3, "SH-5", "SH", 45.0, 35.0, 0.20,
+     [[91.8770, 25.8920], [91.88, 25.72], [91.8933, 25.5788]]),
+
+    # Guwahati → Nagaon (NH27)
+    (1, 5, "NH27", "NH", 120.0, 55.0, 0.0,
+     [[91.7362, 26.1445], [92.10, 26.22], [92.6900, 26.3500]]),
+
+    # Nagaon → Tezpur
+    (5, 4, "NH15", "NH", 90.0, 50.0, 0.15,
+     [[92.6900, 26.3500], [92.75, 26.50], [92.8000, 26.6338]]),
+
+    # Nagaon → Lumding Junction
+    (5, 17, "NH36", "NH", 75.0, 45.0, 0.10,
+     [[92.6900, 26.3500], [92.85, 25.95], [93.1700, 25.7500]]),
+
+    # Lumding → Dimapur
+    (17, 10, "NH29", "NH", 85.0, 45.0, 0.20,
+     [[93.1700, 25.7500], [93.40, 25.80], [93.7271, 25.9042]]),
+
+    # Lumding → Haflong → Silchar
+    (17, 18, "NH54", "NH", 80.0, 35.0, 0.35,
+     [[93.1700, 25.7500], [93.10, 25.45], [93.0170, 25.1650]]),
+    (18, 11, "NH54", "NH", 95.0, 35.0, 0.30,
+     [[93.0170, 25.1650], [92.90, 25.00], [92.7789, 24.8333]]),
+
+    # Nagaon → Numaligarh → Jorhat
+    (5, 20, "NH37", "NH", 85.0, 50.0, 0.05,
+     [[92.6900, 26.3500], [93.20, 26.50], [93.7200, 26.6200]]),
+    (20, 7, "NH37", "NH", 55.0, 50.0, 0.05,
+     [[93.7200, 26.6200], [94.00, 26.70], [94.2037, 26.7509]]),
+
+    # Jorhat → Dibrugarh → Tinsukia
+    (7, 6, "NH37", "NH", 130.0, 50.0, 0.08,
+     [[94.2037, 26.7509], [94.50, 27.00], [94.9120, 27.4728]]),
+    (6, 19, "NH37", "NH", 50.0, 50.0, 0.05,
+     [[94.9120, 27.4728], [95.10, 27.48], [95.3560, 27.4890]]),
+
+    # Dimapur → Kohima → Imphal
+    (10, 9, "NH29", "NH", 74.0, 30.0, 0.55,
+     [[93.7271, 25.9042], [93.90, 25.80], [94.1100, 25.6700]]),
+    (9, 8, "NH2", "NH", 135.0, 35.0, 0.40,
+     [[94.1100, 25.6700], [94.05, 25.20], [93.9368, 24.8170]]),
+
+    # Dimapur → Mokokchung (alternate north Nagaland route)
+    (10, 21, "NH61", "SH", 130.0, 30.0, 0.50,
+     [[93.7271, 25.9042], [94.10, 26.10], [94.5180, 26.3220]]),
+
+    # Imphal → Churachandpur
+    (8, 16, "NH2", "SH", 62.0, 30.0, 0.60,
+     [[93.9368, 24.8170], [93.80, 24.55], [93.6830, 24.3330]]),
+
+    # Silchar → Aizawl
+    (11, 12, "NH54", "NH", 170.0, 30.0, 0.70,
+     [[92.7789, 24.8333], [92.75, 24.30], [92.7176, 23.7271]]),
+
+    # Silchar → Agartala
+    (11, 13, "NH8", "NH", 310.0, 40.0, 0.15,
+     [[92.7789, 24.8333], [92.00, 24.20], [91.2868, 23.8315]]),
+
+    # Guwahati → Nongstoin → Tura (western Meghalaya)
+    (1, 22, "NH6W", "SH", 110.0, 35.0, 0.35,
+     [[91.7362, 26.1445], [91.50, 25.80], [91.2650, 25.5200]]),
+    (22, 23, "NH62", "NH", 130.0, 35.0, 0.25,
+     [[91.2650, 25.5200], [90.70, 25.50], [90.2170, 25.5150]]),
+
+    # Siliguri → Gangtok
+    (15, 14, "NH10", "NH", 124.0, 30.0, 0.75,
+     [[88.3953, 26.7271], [88.50, 27.00], [88.6138, 27.3314]]),
+
+    # Guwahati → Shillong alternate (via east bypass)
+    (1, 3, "NH40-Alt", "SH", 105.0, 40.0, 0.10,
+     [[91.7362, 26.1445], [91.85, 25.85], [91.8933, 25.5788]]),
+
+    # Tezpur → Numaligarh (cross-river connection)
+    (4, 20, "NH15X", "SH", 60.0, 40.0, 0.10,
+     [[92.8000, 26.6338], [93.25, 26.63], [93.7200, 26.6200]]),
+]
+
+
+def _build_linestring_wkt(coords: list[list[float]]) -> str:
+    """Build a WKT LINESTRING from a list of [lng, lat] coordinate pairs."""
+    points = ", ".join(f"{c[0]} {c[1]}" for c in coords)
+    return f"LINESTRING({points})"
+
+
+def _build_route_wkt(node_ids: list[int]) -> str:
+    """Build a WKT LINESTRING from a sequence of node IDs."""
+    coords = []
+    for nid in node_ids:
+        node = NER_ROAD_NODES.get(nid)
+        if node:
+            coords.append(f"{node['lng']} {node['lat']}")
+    return f"LINESTRING({', '.join(coords)})"
 
 
 async def seed_demo_data(db: AsyncSession) -> None:
@@ -278,5 +421,124 @@ async def seed_demo_data(db: AsyncSession) -> None:
         db.add(weather_record)
 
     await db.flush()
+
+    # ── Stage 3: Road Network Edges ────────────────────────────────────────
+    for edge_data in NER_ROAD_EDGES:
+        src, tgt, road_name, road_class, length_km, base_speed, hazard, coords = edge_data
+        base_duration = (length_km / base_speed) * 60  # minutes
+
+        # Determine initial status based on hazard penalty
+        status = RoadStatus.CLEAR
+        if hazard >= 0.80:
+            status = RoadStatus.BLOCKED
+        elif hazard >= 0.50:
+            status = RoadStatus.RESTRICTED
+
+        wkt = _build_linestring_wkt(coords)
+
+        edge = RoadNetworkEdge(
+            source_node=src,
+            target_node=tgt,
+            road_name=road_name,
+            road_class=road_class,
+            length_km=length_km,
+            base_speed_kmh=base_speed,
+            base_duration_min=round(base_duration, 1),
+            is_active=True,
+            current_status=status,
+            current_hazard_penalty=hazard,
+            geom=ST_GeomFromText(wkt, 4326),
+        )
+        db.add(edge)
+
+        # Add reverse edge (bidirectional roads) with same attributes
+        reverse_coords = list(reversed(coords))
+        reverse_wkt = _build_linestring_wkt(reverse_coords)
+
+        reverse_edge = RoadNetworkEdge(
+            source_node=tgt,
+            target_node=src,
+            road_name=road_name,
+            road_class=road_class,
+            length_km=length_km,
+            base_speed_kmh=base_speed,
+            base_duration_min=round(base_duration, 1),
+            is_active=True,
+            current_status=status,
+            current_hazard_penalty=hazard,
+            geom=ST_GeomFromText(reverse_wkt, 4326),
+        )
+        db.add(reverse_edge)
+
+    await db.flush()
+
+    # ── Stage 3: Demo Vehicle Trips ────────────────────────────────────────
+    # Trip 1: Emergency medical supply — Guwahati → Imphal
+    route_1_wkt = _build_route_wkt([1, 5, 17, 10, 9, 8])
+    trip_1 = VehicleTrip(
+        vehicle_id=vehicles[0].id,
+        origin_name="Guwahati Hub",
+        origin_coords=ST_MakePoint(91.7362, 26.1445),
+        dest_name="Imphal",
+        dest_coords=ST_MakePoint(93.9368, 24.8170),
+        commodity_type=CommodityType.MEDICINE,
+        priority_level=TripPriority.EMERGENCY,
+        status=TripStatus.IN_TRANSIT,
+        original_route_geom=ST_GeomFromText(route_1_wkt, 4326),
+        current_active_route=ST_GeomFromText(route_1_wkt, 4326),
+        estimated_arrival=now + timedelta(hours=12),
+    )
+
+    # Trip 2: Food grains — Dibrugarh → Silchar
+    route_2_wkt = _build_route_wkt([6, 7, 20, 5, 17, 18, 11])
+    trip_2 = VehicleTrip(
+        vehicle_id=vehicles[3].id,
+        origin_name="Dibrugarh",
+        origin_coords=ST_MakePoint(94.9120, 27.4728),
+        dest_name="Silchar",
+        dest_coords=ST_MakePoint(92.7789, 24.8333),
+        commodity_type=CommodityType.FOOD_GRAINS,
+        priority_level=TripPriority.STANDARD,
+        status=TripStatus.IN_TRANSIT,
+        original_route_geom=ST_GeomFromText(route_2_wkt, 4326),
+        current_active_route=ST_GeomFromText(route_2_wkt, 4326),
+        estimated_arrival=now + timedelta(hours=18),
+    )
+
+    # Trip 3: Fuel supply — Guwahati → Shillong (via hazardous NH6)
+    route_3_wkt = _build_route_wkt([1, 24, 3])
+    trip_3 = VehicleTrip(
+        vehicle_id=vehicles[1].id,
+        origin_name="Guwahati Hub",
+        origin_coords=ST_MakePoint(91.7362, 26.1445),
+        dest_name="Shillong",
+        dest_coords=ST_MakePoint(91.8933, 25.5788),
+        commodity_type=CommodityType.FUEL,
+        priority_level=TripPriority.HIGH_PRIORITY,
+        status=TripStatus.IN_TRANSIT,
+        original_route_geom=ST_GeomFromText(route_3_wkt, 4326),
+        current_active_route=ST_GeomFromText(route_3_wkt, 4326),
+        estimated_arrival=now + timedelta(hours=3),
+    )
+
+    # Trip 4: General supply — Imphal → Churachandpur (rerouted example)
+    route_4_wkt = _build_route_wkt([8, 16])
+    trip_4 = VehicleTrip(
+        vehicle_id=vehicles[2].id,
+        origin_name="Imphal",
+        origin_coords=ST_MakePoint(93.9368, 24.8170),
+        dest_name="Churachandpur",
+        dest_coords=ST_MakePoint(93.6830, 24.3330),
+        commodity_type=CommodityType.GENERAL,
+        priority_level=TripPriority.STANDARD,
+        status=TripStatus.REROUTED,
+        original_route_geom=ST_GeomFromText(route_4_wkt, 4326),
+        current_active_route=ST_GeomFromText(route_4_wkt, 4326),
+        estimated_arrival=now + timedelta(hours=4),
+        last_rerouted_at=now - timedelta(hours=1),
+    )
+
+    db.add_all([trip_1, trip_2, trip_3, trip_4])
+    await db.flush()
     await db.commit()
-    print("✅ Demo data seeded successfully (Stage 1 + Stage 2 grid cells).")
+    print("✅ Demo data seeded successfully (Stage 1 + Stage 2 + Stage 3 routing).")

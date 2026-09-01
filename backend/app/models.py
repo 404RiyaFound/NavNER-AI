@@ -7,11 +7,13 @@ from datetime import datetime, timezone
 from geoalchemy2 import Geometry
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Column,
     DateTime,
     Enum,
     Float,
     ForeignKey,
+    Integer,
     String,
     Text,
 )
@@ -65,6 +67,39 @@ class RiskLevel(str, enum.Enum):
     CRITICAL = "CRITICAL"
 
 
+# ── Stage 3 Enums ─────────────────────────────────────────────────────────────
+
+
+class RoadStatus(str, enum.Enum):
+    """Current traversability status of a road segment."""
+    CLEAR = "CLEAR"
+    RESTRICTED = "RESTRICTED"
+    BLOCKED = "BLOCKED"
+
+
+class CommodityType(str, enum.Enum):
+    """Type of cargo being transported."""
+    MEDICINE = "MEDICINE"
+    FOOD_GRAINS = "FOOD_GRAINS"
+    FUEL = "FUEL"
+    GENERAL = "GENERAL"
+
+
+class TripPriority(str, enum.Enum):
+    """Priority level for a supply vehicle trip."""
+    EMERGENCY = "EMERGENCY"
+    HIGH_PRIORITY = "HIGH_PRIORITY"
+    STANDARD = "STANDARD"
+
+
+class TripStatus(str, enum.Enum):
+    """Current status of a vehicle trip."""
+    PENDING = "PENDING"
+    IN_TRANSIT = "IN_TRANSIT"
+    REROUTED = "REROUTED"
+    COMPLETED = "COMPLETED"
+
+
 # ── Stage 1 Models ─────────────────────────────────────────────────────────────
 
 
@@ -96,6 +131,7 @@ class Vehicle(Base):
 
     # Relationships
     telemetry_records = relationship("Telemetry", back_populates="vehicle")
+    trips = relationship("VehicleTrip", back_populates="vehicle")
 
 
 class Incident(Base):
@@ -200,4 +236,78 @@ class SegmentRiskAssessment(Base):
 
     # Relationships
     grid_cell = relationship("SpatialGridCell", back_populates="risk_assessment")
+
+
+# ── Stage 3 Models — Dynamic Routing & Fleet Optimization ──────────────────────
+
+
+class RoadNetworkEdge(Base):
+    """Directed weighted edge in the NER road network topology graph."""
+    __tablename__ = "road_network_edges"
+
+    edge_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    source_node = Column(BigInteger, nullable=False, index=True)
+    target_node = Column(BigInteger, nullable=False, index=True)
+    road_name = Column(String(100), nullable=True)
+    road_class = Column(String(50), nullable=True)  # 'NH', 'SH', 'MDR', 'RURAL'
+    length_km = Column(Float, nullable=False)
+    base_speed_kmh = Column(Float, nullable=False)
+    base_duration_min = Column(Float, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    current_status = Column(
+        Enum(RoadStatus), nullable=False, default=RoadStatus.CLEAR
+    )
+    current_hazard_penalty = Column(Float, default=0.0, nullable=False)
+    geom = Column(Geometry("LINESTRING", srid=4326), nullable=False)
+
+
+class VehicleTrip(Base):
+    """Active vehicle mission with route assignment and reroute tracking."""
+    __tablename__ = "vehicle_trips"
+
+    trip_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    vehicle_id = Column(
+        UUID(as_uuid=True), ForeignKey("vehicles.id"), nullable=False
+    )
+    origin_name = Column(String(100), nullable=False)
+    origin_coords = Column(Geometry("POINT", srid=4326), nullable=False)
+    dest_name = Column(String(100), nullable=False)
+    dest_coords = Column(Geometry("POINT", srid=4326), nullable=False)
+    commodity_type = Column(
+        Enum(CommodityType), nullable=False, default=CommodityType.GENERAL
+    )
+    priority_level = Column(
+        Enum(TripPriority), nullable=False, default=TripPriority.STANDARD
+    )
+    status = Column(
+        Enum(TripStatus), nullable=False, default=TripStatus.IN_TRANSIT
+    )
+    original_route_geom = Column(Geometry("LINESTRING", srid=4326), nullable=True)
+    current_active_route = Column(Geometry("LINESTRING", srid=4326), nullable=True)
+    estimated_arrival = Column(DateTime(timezone=True), nullable=True)
+    last_rerouted_at = Column(DateTime(timezone=True), nullable=True)
+
+    # Relationships
+    vehicle = relationship("Vehicle", back_populates="trips")
+    reroute_logs = relationship("RerouteLog", back_populates="trip")
+
+
+class RerouteLog(Base):
+    """Audit trail for every rerouting decision."""
+    __tablename__ = "reroute_logs"
+
+    log_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    trip_id = Column(
+        UUID(as_uuid=True), ForeignKey("vehicle_trips.trip_id"), nullable=False
+    )
+    trigger_reason = Column(String(100), nullable=False)
+    old_eta = Column(DateTime(timezone=True), nullable=True)
+    new_eta = Column(DateTime(timezone=True), nullable=True)
+    delay_variance_minutes = Column(Integer, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+
+    # Relationships
+    trip = relationship("VehicleTrip", back_populates="reroute_logs")
 
