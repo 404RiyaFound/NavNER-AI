@@ -21,8 +21,8 @@ router = APIRouter(prefix="/api/v1", tags=["incidents"])
 @router.post("/incident", response_model=IncidentResponse, status_code=201)
 async def create_incident(
     type: IncidentType = Form(...),
-    lat: float = Form(...),
-    lng: float = Form(...),
+    lat: float = Form(..., ge=-90, le=90),
+    lng: float = Form(..., ge=-180, le=180),
     description: str = Form(None),
     reported_by: str = Form(None),
     image: UploadFile | None = File(None),
