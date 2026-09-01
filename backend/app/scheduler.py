@@ -40,6 +40,7 @@ async def run_risk_evaluation() -> dict:
     now = datetime.now(timezone.utc)
     counts = {"LOW": 0, "MODERATE": 0, "HIGH": 0, "CRITICAL": 0}
     evaluated = 0
+    critical_indices = []
 
     async with async_session() as db:
         # Fetch all grid cells
@@ -90,6 +91,9 @@ async def run_risk_evaluation() -> dict:
                         primary_contributing_factor=result["primary_contributing_factor"],
                     ))
 
+                if risk_level in (RiskLevel.CRITICAL, RiskLevel.HIGH):
+                    critical_indices.append(cell.h3_index)
+
                 counts[result["composite_risk_level"]] += 1
                 evaluated += 1
 
@@ -120,6 +124,10 @@ async def run_risk_evaluation() -> dict:
                 )
 
         await db.commit()
+
+        if critical_indices:
+            from app.services.reroute_trigger import trigger_hazard_reroute
+            await trigger_hazard_reroute(critical_indices, db)
 
     summary = {
         "evaluated_cells": evaluated,

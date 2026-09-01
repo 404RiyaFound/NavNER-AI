@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -103,26 +104,27 @@ async def _get_blocked_edge_ids(db: AsyncSession) -> list[int]:
 
 
 async def _get_hazard_penalties(db: AsyncSession) -> dict[int, float]:
-    """Build edge_id → hazard_penalty map from CRITICAL/HIGH risk cells."""
-    # Get critical/high risk assessments
-    stmt = select(SegmentRiskAssessment).where(
-        SegmentRiskAssessment.composite_risk_level.in_(["CRITICAL", "HIGH"])
+    """Build edge_id → hazard_penalty map from CRITICAL/HIGH risk cells using PostGIS intersection."""
+    from sqlalchemy import func
+    from app.models import SpatialGridCell
+
+    stmt = (
+        select(
+            RoadNetworkEdge.edge_id,
+            func.max(SegmentRiskAssessment.landslide_risk_score + SegmentRiskAssessment.flood_risk_score).label("max_risk")
+        )
+        .join(SpatialGridCell, func.ST_Intersects(RoadNetworkEdge.geom, SpatialGridCell.geom))
+        .join(SegmentRiskAssessment, SegmentRiskAssessment.h3_index == SpatialGridCell.h3_index)
+        .where(SegmentRiskAssessment.composite_risk_level.in_(["CRITICAL", "HIGH"]))
+        .group_by(RoadNetworkEdge.edge_id)
     )
-    risks = (await db.execute(stmt)).scalars().all()
 
-    # For now, apply the max risk to edges with matching hazard_penalty > 0
-    # In production, this would use PostGIS spatial intersection
+    rows = (await db.execute(stmt)).all()
+
     edge_penalties: dict[int, float] = {}
-
-    # Get all edges with non-zero hazard penalty
-    edge_stmt = select(
-        RoadNetworkEdge.edge_id,
-        RoadNetworkEdge.current_hazard_penalty,
-    ).where(RoadNetworkEdge.current_hazard_penalty > 0)
-    edge_rows = (await db.execute(edge_stmt)).all()
-
-    for row in edge_rows:
-        edge_penalties[row.edge_id] = row.current_hazard_penalty
+    for row in rows:
+        penalty = min(row.max_risk / 2.0, 1.0)
+        edge_penalties[row.edge_id] = penalty
 
     return edge_penalties
 
@@ -149,13 +151,18 @@ async def calculate_route(
     payload: RouteCalculateRequest,
     db: AsyncSession = Depends(get_db),
 ):
-    """Calculate or recalculate the optimal route for a vehicle trip.
+    """Calculate or recalculate the optimal route for a vehicle trip."""
+    return await recalculate_trip_route(payload.trip_id, payload.avoid_hazards, db)
 
-    Fetches current hazards and blocked edges, builds the graph, runs
-    Dijkstra, updates the trip record, and logs the reroute event.
-    """
+
+async def recalculate_trip_route(
+    trip_id: str | uuid.UUID,
+    avoid_hazards: bool,
+    db: AsyncSession,
+) -> RouteCalculateResponse:
+    """Core logic to fetch trip, rebuild graph, calculate optimal path, and notify."""
     # 1. Fetch the trip
-    trip = await db.get(VehicleTrip, payload.trip_id)
+    trip = await db.get(VehicleTrip, trip_id)
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
 
@@ -164,7 +171,7 @@ async def calculate_route(
 
     # 3. Gather dynamic cost inputs
     blocked_ids = await _get_blocked_edge_ids(db)
-    hazard_penalties = await _get_hazard_penalties(db) if payload.avoid_hazards else {}
+    hazard_penalties = await _get_hazard_penalties(db) if avoid_hazards else {}
 
     # 4. Apply dynamic costs
     graph_router.apply_dynamic_costs(
@@ -258,7 +265,7 @@ async def calculate_route(
         delay_min = int(delay) if delay else None
         log = RerouteLog(
             trip_id=trip.trip_id,
-            trigger_reason="HAZARD_AVOIDANCE" if payload.avoid_hazards else "MANUAL_RECALCULATION",
+            trigger_reason="HAZARD_AVOIDANCE" if avoid_hazards else "MANUAL_RECALCULATION",
             old_eta=old_eta,
             new_eta=new_eta,
             delay_variance_minutes=delay_min,
