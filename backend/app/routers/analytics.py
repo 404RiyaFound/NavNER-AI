@@ -19,7 +19,7 @@ from app.models import (
     SpatialGridCell,
     WeatherTelemetryRecord,
 )
-from app.risk_engine import risk_engine
+from app.risk_engine import classify_hazard, risk_engine
 from app.schemas import (
     EvaluateGridRequest,
     EvaluateGridResponse,
@@ -78,10 +78,12 @@ async def get_hazard_map(
     features: list[HazardFeature] = []
 
     for row in rows:
-        # Compute composite score from individual risk scores
+        # Use classify_hazard to ensure composite score logic matches risk_engine
         ls = row.landslide_risk_score or 0.0
         fl = row.flood_risk_score or 0.0
-        composite = max(ls, fl) * 0.8 + min(ls, fl) * 0.2
+        
+        classification = classify_hazard(ls, fl)
+        composite = classification["composite_score"]
 
         # Apply min_risk filter
         if composite < min_risk:
@@ -91,13 +93,7 @@ async def get_hazard_map(
         if isinstance(risk_level, RiskLevel):
             risk_level = risk_level.value
 
-        # Action mapping
-        action_map = {
-            "LOW": "NORMAL_TRANSIT",
-            "MODERATE": "SPEED_RESTRICTION",
-            "HIGH": "REROUTE_RECOMMENDED",
-            "CRITICAL": "IMMEDIATE_REROUTE",
-        }
+        action_required = classification["action_required"]
 
         # Fetch latest weather telemetry for enrichment (if available)
         latest_weather = (
@@ -134,7 +130,7 @@ async def get_hazard_map(
                 rainfall_1h_mm=latest_weather.rainfall_1h_mm if latest_weather else None,
                 rainfall_24h_mm=latest_weather.rainfall_24h_mm if latest_weather else None,
                 soil_saturation_pct=latest_weather.soil_saturation_pct if latest_weather else None,
-                action_required=action_map.get(risk_level, "NORMAL_TRANSIT"),
+                action_required=action_required,
             ),
         )
         features.append(feature)
