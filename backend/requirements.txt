@@ -17,3 +17,5 @@ apscheduler>=3.10.4
 # Stage 3 — Dynamic Routing & Fleet Optimization
 networkx>=3.3
 shapely>=2.0
+# Stage 4 — Alert Dispatch & Cloud Integration
+boto3>=1.34

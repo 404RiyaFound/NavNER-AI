@@ -3,8 +3,9 @@
  * Stage 1: Live vehicle tracking + incident reporting
  * Stage 2: AI Predictive Disruption Heatmap + Emergency Alerts
  * Stage 3: Dynamic Rerouting Engine + Fleet Optimization
+ * Stage 4: Centralized Analytics Dashboard + Alert Dispatch
  */
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import './index.css';
 import { Header } from './components/Header';
 import { MapCanvas } from './components/MapCanvas';
@@ -13,6 +14,7 @@ import { HazardMapOverlay } from './components/HazardMapOverlay';
 import { AlertBanner } from './components/AlertBanner';
 import { FleetRouteViewer } from './components/FleetRouteViewer';
 import { FleetSideDrawer } from './components/FleetSideDrawer';
+import { AnalyticsDashboard } from './components/AnalyticsDashboard';
 import { useMapState } from './hooks/useMapState';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useHazardMap } from './hooks/useHazardMap';
@@ -23,6 +25,7 @@ function App() {
   const [mapInstance, setMapInstance] = useState(null);
   const [riskUpdate, setRiskUpdate] = useState(null);
   const [selectedTripId, setSelectedTripId] = useState(null);
+  const [activeView, setActiveView] = useState('map'); // 'map' | 'analytics'
 
   // Fetch hazard data for the heatmap overlay
   const { hazardData, refetch: refetchHazard } = useHazardMap({ enabled: true });
@@ -56,19 +59,16 @@ function App() {
         break;
       }
       case 'risk_update': {
-        // Stage 2: Refresh hazard data when risk evaluation completes
         setRiskUpdate(message.data);
         refetchHazard();
         break;
       }
       case 'reroute_alert': {
-        // Stage 3: Handle reroute alerts — update fleet data in-place
         handleRerouteAlert(message.data);
         refetchFleet();
         break;
       }
       case 'fleet_update': {
-        // Stage 3: General fleet status update
         refetchFleet();
         break;
       }
@@ -79,12 +79,10 @@ function App() {
 
   const { isConnected } = useWebSocket(handleWsMessage);
 
-  // Map ready callback — store reference for overlay
   const handleMapReady = useCallback((map) => {
     setMapInstance(map);
   }, []);
 
-  // Fly to incident location on the map
   const handleFlyTo = useCallback((lng, lat) => {
     const container = document.getElementById('map-canvas');
     if (container?.__flyTo) {
@@ -124,50 +122,59 @@ function App() {
         incidentCount={incidents.length}
         isConnected={isConnected}
         fleetData={fleetData}
+        activeView={activeView}
+        onViewChange={setActiveView}
       />
 
       {/* Stage 2: Emergency Alert Banner */}
       <AlertBanner hazardData={hazardData} riskUpdate={riskUpdate} />
 
-      <div className="app-body">
-        {/* Stage 3: Fleet Side Drawer (left side) */}
-        <FleetSideDrawer
-          fleetData={fleetData}
-          loading={fleetLoading}
-          selectedTripId={selectedTripId}
-          onSelectTrip={setSelectedTripId}
-          onTriggerReroute={handleAcceptRoute}
-        />
+      {/* Stage 4: Tab-based view switching */}
+      {activeView === 'map' ? (
+        <div className="app-body">
+          {/* Stage 3: Fleet Side Drawer (left side) */}
+          <FleetSideDrawer
+            fleetData={fleetData}
+            loading={fleetLoading}
+            selectedTripId={selectedTripId}
+            onSelectTrip={setSelectedTripId}
+            onTriggerReroute={handleAcceptRoute}
+          />
 
-        <MapCanvas
-          vehicles={vehicles}
-          incidents={incidents}
-          onIncidentClick={(incident) => handleFlyTo(incident.lng, incident.lat)}
-          onMapReady={handleMapReady}
-        />
+          <MapCanvas
+            vehicles={vehicles}
+            incidents={incidents}
+            onIncidentClick={(incident) => handleFlyTo(incident.lng, incident.lat)}
+            onMapReady={handleMapReady}
+          />
 
-        {/* Stage 3: Route overlay on map */}
-        <FleetRouteViewer
-          map={mapInstance}
-          fleetData={fleetData}
-          selectedTripId={selectedTripId}
-          onSelectTrip={setSelectedTripId}
-          onAcceptRoute={handleAcceptRoute}
-          onRevertRoute={handleRevertRoute}
-        />
+          {/* Stage 3: Route overlay on map */}
+          <FleetRouteViewer
+            map={mapInstance}
+            fleetData={fleetData}
+            selectedTripId={selectedTripId}
+            onSelectTrip={setSelectedTripId}
+            onAcceptRoute={handleAcceptRoute}
+            onRevertRoute={handleRevertRoute}
+          />
 
-        {/* Stage 2: Hazard Map Overlay Controls */}
-        <HazardMapOverlay
-          map={mapInstance}
-          hazardData={hazardData}
-          enabled={true}
-        />
+          {/* Stage 2: Hazard Map Overlay Controls */}
+          <HazardMapOverlay
+            map={mapInstance}
+            hazardData={hazardData}
+            enabled={true}
+          />
 
-        <IncidentPanel
-          incidents={incidents}
-          onFlyTo={handleFlyTo}
-        />
-      </div>
+          <IncidentPanel
+            incidents={incidents}
+            onFlyTo={handleFlyTo}
+          />
+        </div>
+      ) : (
+        <div className="app-body analytics-view">
+          <AnalyticsDashboard />
+        </div>
+      )}
     </div>
   );
 }

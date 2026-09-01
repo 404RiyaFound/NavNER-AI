@@ -1,7 +1,7 @@
 /**
- * Header component with branding, live stats, fleet status, and WebSocket status.
+ * Header component with branding, live stats, fleet status, view tabs, and WebSocket status.
  */
-export function Header({ vehicleCount, incidentCount, isConnected, fleetData }) {
+export function Header({ vehicleCount, incidentCount, isConnected, fleetData, activeView, onViewChange }) {
   return (
     <header className="header">
       <div className="header-brand">
@@ -10,6 +10,22 @@ export function Header({ vehicleCount, incidentCount, isConnected, fleetData }) 
           <div className="header-title">NavNER Command Center</div>
           <div className="header-subtitle">NER Logistics Intelligence</div>
         </div>
+      </div>
+
+      {/* Stage 4: View tab switcher */}
+      <div className="header-tabs">
+        <button
+          className={`header-tab ${activeView === 'map' ? 'active' : ''}`}
+          onClick={() => onViewChange?.('map')}
+        >
+          🗺️ Map
+        </button>
+        <button
+          className={`header-tab ${activeView === 'analytics' ? 'active' : ''}`}
+          onClick={() => onViewChange?.('analytics')}
+        >
+          📊 Analytics
+        </button>
       </div>
 
       <div className="header-stats">

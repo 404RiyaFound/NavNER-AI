@@ -311,3 +311,31 @@ class RerouteLog(Base):
     # Relationships
     trip = relationship("VehicleTrip", back_populates="reroute_logs")
 
+
+# ── Stage 4 Models — Alert Dispatch & Analytics ────────────────────────────────
+
+
+class AlertTier(str, enum.Enum):
+    """Notification tier for the two-tier alert dispatch system."""
+    CRITICAL = "CRITICAL"
+    INFORMATIONAL = "INFORMATIONAL"
+
+
+class AlertLog(Base):
+    """Audit trail for dispatched alerts (both critical and batched)."""
+    __tablename__ = "alert_logs"
+
+    log_id = Column(BigInteger, primary_key=True, autoincrement=True)
+    tier = Column(Enum(AlertTier), nullable=False)
+    event_type = Column(String(100), nullable=False)
+    severity = Column(String(50), nullable=True)
+    message = Column(Text, nullable=False)
+    source = Column(String(100), nullable=True, default="navner-ai")
+    recipient = Column(String(200), nullable=True)
+    delivery_status = Column(String(50), nullable=True, default="dispatched")
+    vehicle_id = Column(UUID(as_uuid=True), nullable=True)
+    trip_id = Column(UUID(as_uuid=True), nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
+    )
+

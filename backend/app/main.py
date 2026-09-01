@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import async_session, engine
 from app.models import Base
-from app.routers import analytics, incidents, map_state, routing, telemetry
+from app.routers import analytics, dashboard, incidents, map_state, routing, telemetry
 from app.scheduler import start_scheduler, stop_scheduler
 from app.seed import seed_demo_data
 from app.websocket import manager
@@ -38,8 +38,8 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="NavNER-AI Backend",
-    description="AI-powered logistics intelligence platform for NER — Stage 1, 2 & 3 API",
-    version="0.3.0",
+    description="AI-powered logistics intelligence platform for NER — Stage 1, 2, 3 & 4 API",
+    version="0.4.0",
     lifespan=lifespan,
 )
 
@@ -62,6 +62,7 @@ app.include_router(incidents.router)
 app.include_router(map_state.router)
 app.include_router(analytics.router)
 app.include_router(routing.router)
+app.include_router(dashboard.router)
 
 
 # ── WebSocket endpoint ─────────────────────────────────────────────────────────
@@ -92,4 +93,4 @@ async def fleet_monitor_ws(websocket: WebSocket):
 # ── Health check ───────────────────────────────────────────────────────────
 @app.get("/health", tags=["system"])
 async def health_check():
-    return {"status": "ok", "service": "navner-ai-backend", "version": "0.3.0"}
+    return {"status": "ok", "service": "navner-ai-backend", "version": "0.4.0"}

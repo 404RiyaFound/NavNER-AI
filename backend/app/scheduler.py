@@ -3,6 +3,9 @@
 Runs every 30 minutes: fetches latest weather for all H3 cells → runs ML
 batch inference → updates segment_risk_assessments → broadcasts WebSocket
 alert to all connected dashboard clients.
+
+Stage 4: Also triggers CRITICAL alert dispatch for critical risk cells
+and runs a batched informational alert summary every 60 minutes.
 """
 
 from __future__ import annotations
@@ -13,6 +16,7 @@ from datetime import datetime, timezone
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select, update
 
+from app.alert_dispatcher import alert_dispatcher
 from app.database import async_session
 from app.models import (
     RiskLevel,
@@ -89,6 +93,27 @@ async def run_risk_evaluation() -> dict:
                 counts[result["composite_risk_level"]] += 1
                 evaluated += 1
 
+                # ── Stage 4: Auto-trigger CRITICAL alerts ──────────────────
+                if result["composite_risk_level"] == "CRITICAL":
+                    await alert_dispatcher.process_event({
+                        "event_type": "HIGH_PROBABILITY_LANDSLIDE" if result["landslide_risk_score"] > result["flood_risk_score"] else "IMMEDIATE_REROUTE",
+                        "severity": "CRITICAL",
+                        "message": f"CRITICAL risk in {cell.district}, {cell.state}: "
+                                   f"{result['primary_contributing_factor']} "
+                                   f"(blockage prob: {result['predicted_blockage_probability']:.0%})",
+                        "source": "risk_evaluation_scheduler",
+                        "location": {"lat": lat, "lng": lng, "district": cell.district},
+                    })
+                elif result["composite_risk_level"] == "HIGH":
+                    await alert_dispatcher.process_event({
+                        "event_type": "SPEED_RESTRICTION",
+                        "severity": "HIGH",
+                        "message": f"HIGH risk in {cell.district}, {cell.state}: "
+                                   f"{result['primary_contributing_factor']}",
+                        "source": "risk_evaluation_scheduler",
+                        "location": {"lat": lat, "lng": lng, "district": cell.district},
+                    })
+
             except Exception as exc:
                 logger.error(
                     "[Scheduler] Error evaluating cell %s: %s", cell.h3_index, exc
@@ -121,8 +146,23 @@ async def run_risk_evaluation() -> dict:
     return summary
 
 
+async def dispatch_batched_alerts() -> dict:
+    """Dispatch batched informational alerts as an hourly summary.
+
+    Stage 4: Collects all buffered INFORMATIONAL events and sends
+    them as a single digest via SNS (or logs in dev mode).
+    """
+    result = await alert_dispatcher.dispatch_batched_summary()
+    logger.info(
+        "[Scheduler] Batched alert dispatch — %d events, dispatched=%s",
+        result.get("count", 0), result.get("dispatched", False),
+    )
+    return result
+
+
 def start_scheduler() -> None:
-    """Start the APScheduler with a 30-minute interval job."""
+    """Start the APScheduler with periodic jobs."""
+    # Risk evaluation every 30 minutes
     scheduler.add_job(
         run_risk_evaluation,
         "interval",
@@ -131,8 +171,19 @@ def start_scheduler() -> None:
         name="Periodic risk evaluation",
         replace_existing=True,
     )
+
+    # Stage 4: Batched alert dispatch every 60 minutes
+    scheduler.add_job(
+        dispatch_batched_alerts,
+        "interval",
+        minutes=60,
+        id="batched_alert_dispatch",
+        name="Batched informational alert dispatch",
+        replace_existing=True,
+    )
+
     scheduler.start()
-    logger.info("[Scheduler] Started — risk evaluation every 30 minutes.")
+    logger.info("[Scheduler] Started — risk evaluation every 30m, alert dispatch every 60m.")
 
 
 def stop_scheduler() -> None:
@@ -140,3 +191,4 @@ def stop_scheduler() -> None:
     if scheduler.running:
         scheduler.shutdown(wait=False)
         logger.info("[Scheduler] Stopped.")
+
