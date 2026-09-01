@@ -5,7 +5,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 const QUEUE_KEY = '@navner_sync_queue';
-const API_URL = 'http://localhost:8000'; // Replace with your backend URL
+const API_URL = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:8000';
 
 /**
  * Get all pending reports from the local queue.

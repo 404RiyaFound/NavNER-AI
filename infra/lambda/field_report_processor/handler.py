@@ -58,6 +58,16 @@ def lambda_handler(event, context):
                     errors.append(f"Invalid report {report_id}: missing required fields")
                     continue
 
+                try:
+                    lat_f = float(lat)
+                    lng_f = float(lng)
+                    if not (-90 <= lat_f <= 90) or not (-180 <= lng_f <= 180):
+                        errors.append(f"Invalid report {report_id}: coordinates out of bounds")
+                        continue
+                except ValueError:
+                    errors.append(f"Invalid report {report_id}: coordinates must be numeric")
+                    continue
+
                 # In production, this would write to RDS/PostGIS via Data API
                 # For the hackathon, we log the successful processing
                 logger.info(
