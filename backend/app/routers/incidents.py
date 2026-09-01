@@ -68,6 +68,11 @@ async def create_incident(
     db.add(incident)
     await db.flush()
 
+    # `location` was assigned a SQL expression (ST_MakePoint), so it is expired
+    # after the flush. Load it eagerly here — the downstream reroute trigger reads
+    # it, and an implicit lazy load would raise MissingGreenlet under asyncio.
+    await db.refresh(incident, ["location"])
+
     # Trigger potential reroutes for active fleets
     from app.services.reroute_trigger import trigger_incident_reroute
     await trigger_incident_reroute(incident, db)
