@@ -65,6 +65,9 @@ async def run_risk_evaluation() -> dict:
         )
 
         for cell, (lat, lng), weather in zip(cells, centroids, weather_by_cell):
+            if weather is None:
+                continue
+
             try:
                 # Build terrain data from cell attributes
                 terrain = {

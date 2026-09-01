@@ -100,17 +100,12 @@ async def fetch_weather_for_point(
         )
     except httpx.RequestError as exc:
         logger.warning("Open-Meteo request error for (%s, %s): %s", lat, lng, exc)
-    except Exception as exc:
-        logger.warning("Unexpected error fetching weather for (%s, %s): %s", lat, lng, exc)
+    except Exception as e:
+        logger.error(f"Weather API error for {lat},{lng}: {e}")
+        # Fallback: return None so the pipeline knows data is missing
+        return None
 
-    # Fallback: return zeros so the pipeline doesn't break
-    return {
-        "rainfall_1h_mm": 0.0,
-        "rainfall_24h_mm": 0.0,
-        "soil_saturation_pct": 0.0,
-        "temperature_c": 20.0,
-        "surface_runoff_rate": 0.0,
-    }
+    return None
 
 
 async def fetch_weather_batch(
