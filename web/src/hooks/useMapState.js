@@ -3,7 +3,9 @@
  */
 import { useState, useEffect } from 'react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Use a relative URL so requests route through the Vite dev proxy (no CORS).
+// VITE_API_URL can still be set in production .env to point at the real server.
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 export function useMapState() {
   const [vehicles, setVehicles] = useState([]);

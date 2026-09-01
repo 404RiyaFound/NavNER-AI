@@ -44,9 +44,26 @@ app = FastAPI(
 )
 
 # ── CORS ───────────────────────────────────────────────────────────────────────
+# In local development the Vite dev server can land on any nearby port (5173,
+# 5174, …) depending on what is already occupied.  Rather than maintain a fixed
+# allow-list that silently breaks whenever the port shifts, we open CORS fully
+# while the backend is running on localhost.  The allow_credentials flag below
+# means we cannot use allow_origins=["*"] together with credentials, so we
+# enumerate common dev origins instead and fall back to the env-driven list for
+# production.
+_DEV_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:5174",
+    "http://localhost:5175",
+    "http://localhost:3000",
+    "http://localhost:8081",
+    "http://127.0.0.1:5173",
+    "http://127.0.0.1:5174",
+    "http://127.0.0.1:3000",
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origin_list,
+    allow_origins=_DEV_ORIGINS + settings.cors_origin_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
         "postgresql+psycopg://navner:navner_secret@localhost:5432/navner_ai"
     )
     UPLOAD_DIR: str = "./uploads"
-    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
+    CORS_ORIGINS: str = "http://localhost:5173,http://localhost:5174,http://localhost:3000,http://localhost:8081"
     SNS_TOPIC_ARN: str | None = None
 
     # ── Telemetry simulation (demo / local development) ───────────────────

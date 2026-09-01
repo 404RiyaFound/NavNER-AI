@@ -13,13 +13,10 @@ import { useEffect, useRef, useCallback } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
-// Basemap style. A light street style so rivers, terrain and the road hierarchy
-// read clearly beneath the route and hazard overlays — satellite imagery and a
-// dark basemap both flatten water and roads into the same tone. Needs no API key,
-// and unlike the previous default it is a licensed endpoint.
-const MAP_STYLE_URL =
-  import.meta.env.VITE_MAP_STYLE_URL ||
-  'https://tiles.openfreemap.org/styles/liberty';
+// Basemap raster tiles. Can be overridden via environment variables for deployment.
+const MAP_TILE_URL =
+  import.meta.env.VITE_MAP_TILE_URL ||
+  'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}';
 
 // Retail POI pins are clutter on a logistics map. Place names, road labels and
 // road/water/landcover geometry are all kept — only point-of-interest and
@@ -100,26 +97,33 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, on
 
     const map = new maplibregl.Map({
       container: mapContainer.current,
-      style: MAP_STYLE_URL,
+      style: {
+        version: 8,
+        sources: {
+          'google-satellite': {
+            type: 'raster',
+            tiles: [MAP_TILE_URL],
+            tileSize: 256,
+            attribution: '&copy; Google',
+          },
+        },
+        layers: [{
+          id: 'google-satellite-layer',
+          type: 'raster',
+          source: 'google-satellite',
+          minzoom: 0,
+          maxzoom: 19,
+        }],
+      },
       center: [91.74, 26.15], // Centered directly on Guwahati hazard cluster
       zoom: 11.5, // High zoom needed to clearly see H3 resolution 7 grid cells
-      // Locked to 2D per the issue: pitch and bearing stay at zero and the
-      // rotation gestures are disabled, so overlapping hazard cells cannot be
-      // tilted into a perspective where they occlude one another.
-      pitch: 0,
-      bearing: 0,
-      dragRotate: false,
-      pitchWithRotate: false,
+      pitch: 45,
+      bearing: -12,
       minZoom: 4,
       maxZoom: 18,
     });
 
-    // Rotation only. `touchZoomRotate: false` in the constructor would disable
-    // the entire pinch handler and take pinch-to-zoom with it, which matters on
-    // the field tablets clause (f) targets.
-    map.touchZoomRotate.disableRotation();
-
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'bottom-right');
+    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 140 }), 'bottom-left');
 
     mapRef.current = map;
@@ -299,12 +303,14 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, on
     const v = selectedTripVehicle;
     if (!v || v.lat == null || v.lng == null) return;
 
-    map.flyTo({
+    // Smooth camera fly to street-level 3D view — Uber style
+    map.easeTo({
       center: [v.lng, v.lat],
-      zoom: 14,
-      speed: 1.2,
-      curve: 1.4,
-      essential: true,
+      zoom: 12,
+      pitch: 55,
+      bearing: -20,
+      duration: 1400,
+      easing: t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
     });
   }, [selectedTripVehicle, selectedTripRoute]);
 
@@ -312,7 +318,7 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, on
   useEffect(() => {
     if (mapRef.current && mapContainer.current) {
       mapContainer.current.__flyTo = (lng, lat) => {
-        mapRef.current.easeTo({ center: [lng, lat], zoom: 12, duration: 1000 });
+        mapRef.current.easeTo({ center: [lng, lat], zoom: 12, pitch: 50, duration: 1000 });
       };
     }
   });
