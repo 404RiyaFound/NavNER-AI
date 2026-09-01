@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     )
     UPLOAD_DIR: str = "./uploads"
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
+    SNS_TOPIC_ARN: str | None = None
 
     @property
     def cors_origin_list(self) -> list[str]:
