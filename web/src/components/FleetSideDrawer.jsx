@@ -1,63 +1,75 @@
 /**
- * FleetSideDrawer — Fleet Matrix Side Drawer
- *
- * Stage 3: Lists active supply vehicles categorized by priority with
- * live status tags and reroute approval controls.
+ * FleetSideDrawer — Left panel (logistics mockup style)
+ * Search bar → Add Shipment → Active trip cards (selected = orange)
+ * Incident feed embedded below
  */
 import { useState, useMemo } from 'react';
 
-export function FleetSideDrawer({ fleetData, loading, selectedTripId, onSelectTrip, onTriggerReroute }) {
+const COMMODITY_ICONS = {
+  MEDICINE: '💊',
+  FOOD_GRAINS: '🌾',
+  FUEL: '⛽',
+  GENERAL: '📦',
+};
+
+const PRIORITY_CONFIG = {
+  EMERGENCY: { label: 'Emergency', class: 'tag-emergency', order: 0 },
+  HIGH_PRIORITY: { label: 'High', class: 'tag-high', order: 1 },
+  STANDARD: { label: 'On The Way', class: 'tag-standard', order: 2 },
+};
+
+const INCIDENT_EMOJI = {
+  flood: '🌊',
+  landslide: '⛰️',
+  road_damage: '🚧',
+  bridge_collapse: '🌉',
+};
+
+function timeAgo(dateStr) {
+  if (!dateStr) return '—';
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins}m ago`;
+  return `${Math.floor(mins / 60)}h ago`;
+}
+
+export function FleetSideDrawer({
+  fleetData,
+  loading,
+  selectedTripId,
+  onSelectTrip,
+  incidents = [],
+  onIncidentFlyTo,
+}) {
+  const [search, setSearch] = useState('');
   const [isCollapsed, setIsCollapsed] = useState(false);
-  const [filterPriority, setFilterPriority] = useState('ALL');
 
-  // Priority badge config
-  const priorityConfig = {
-    EMERGENCY: { emoji: '🔴', label: 'Emergency', class: 'priority-emergency', order: 0 },
-    HIGH_PRIORITY: { emoji: '🟠', label: 'High', class: 'priority-high', order: 1 },
-    STANDARD: { emoji: '🔵', label: 'Standard', class: 'priority-standard', order: 2 },
-  };
-
-  // Commodity icons
-  const commodityIcons = {
-    MEDICINE: '💊',
-    FOOD_GRAINS: '🌾',
-    FUEL: '⛽',
-    GENERAL: '📦',
-  };
-
-  // Sort trips by priority (emergency first) then by status (rerouted first)
   const sortedTrips = useMemo(() => {
     if (!fleetData?.active_trips) return [];
     let trips = [...fleetData.active_trips];
 
-    if (filterPriority !== 'ALL') {
-      trips = trips.filter(t => t.priority_level === filterPriority);
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      trips = trips.filter(t =>
+        (t.license_plate || '').toLowerCase().includes(q) ||
+        (t.organization || '').toLowerCase().includes(q) ||
+        (t.vehicle_name || '').toLowerCase().includes(q) ||
+        (t.origin_name || '').toLowerCase().includes(q) ||
+        (t.dest_name || '').toLowerCase().includes(q)
+      );
     }
 
     return trips.sort((a, b) => {
-      const prioA = priorityConfig[a.priority_level]?.order ?? 3;
-      const prioB = priorityConfig[b.priority_level]?.order ?? 3;
-      if (prioA !== prioB) return prioA - prioB;
-      // Rerouted trips shown first
-      if (a.status === 'REROUTED' && b.status !== 'REROUTED') return -1;
-      if (a.status !== 'REROUTED' && b.status === 'REROUTED') return 1;
-      return 0;
+      // Selected first
+      if (a.trip_id === selectedTripId) return -1;
+      if (b.trip_id === selectedTripId) return 1;
+      // Then by priority
+      const pa = PRIORITY_CONFIG[a.priority_level]?.order ?? 3;
+      const pb = PRIORITY_CONFIG[b.priority_level]?.order ?? 3;
+      return pa - pb;
     });
-  }, [fleetData, filterPriority]);
-
-  // Status label + class
-  const getStatusInfo = (trip) => {
-    if (trip.status === 'REROUTED') {
-      const delay = trip.delay_minutes;
-      return {
-        label: delay ? `Rerouted (+${delay}m)` : 'Rerouted',
-        class: 'fleet-status-rerouted',
-      };
-    }
-    if (trip.status === 'IN_TRANSIT') return { label: 'On Route', class: 'fleet-status-active' };
-    if (trip.status === 'PENDING') return { label: 'Pending', class: 'fleet-status-pending' };
-    return { label: trip.status, class: 'fleet-status-default' };
-  };
+  }, [fleetData, search, selectedTripId]);
 
   if (isCollapsed) {
     return (
@@ -75,60 +87,37 @@ export function FleetSideDrawer({ fleetData, loading, selectedTripId, onSelectTr
   }
 
   return (
-    <div className="fleet-drawer" id="fleet-side-drawer">
-      {/* Header */}
+    <aside className="fleet-drawer" id="fleet-side-drawer">
+      {/* Top heading */}
       <div className="fleet-drawer-header">
         <div className="fleet-drawer-title">
-          <span>🚛 Fleet Monitor</span>
+          Shipment
           {fleetData && (
             <span className="fleet-drawer-count-badge">{fleetData.total_active}</span>
           )}
         </div>
-        <button
-          className="panel-toggle"
-          onClick={() => setIsCollapsed(true)}
-          title="Collapse"
-        >
-          ✕
-        </button>
+        <button className="panel-toggle" onClick={() => setIsCollapsed(true)} title="Collapse">✕</button>
       </div>
 
-      {/* Stats Bar */}
-      {fleetData && (
-        <div className="fleet-drawer-stats">
-          <div className="fleet-stat-chip">
-            <span className="fleet-stat-dot active"></span>
-            <span>{fleetData.total_active} Active</span>
-          </div>
-          {fleetData.rerouted_count > 0 && (
-            <div className="fleet-stat-chip rerouted">
-              <span className="fleet-stat-dot rerouted"></span>
-              <span>{fleetData.rerouted_count} Rerouted</span>
-            </div>
-          )}
-          {fleetData.emergency_count > 0 && (
-            <div className="fleet-stat-chip emergency">
-              <span className="fleet-stat-dot emergency"></span>
-              <span>{fleetData.emergency_count} Emergency</span>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Priority Filter */}
-      <div className="fleet-drawer-filters">
-        {['ALL', 'EMERGENCY', 'HIGH_PRIORITY', 'STANDARD'].map((f) => (
-          <button
-            key={f}
-            className={`fleet-filter-btn ${filterPriority === f ? 'active' : ''}`}
-            onClick={() => setFilterPriority(f)}
-          >
-            {f === 'ALL' ? 'All' : priorityConfig[f]?.label || f}
-          </button>
-        ))}
+      {/* Search */}
+      <div className="fleet-search-wrap">
+        <span className="fleet-search-icon">🔍</span>
+        <input
+          type="text"
+          className="fleet-search-input"
+          placeholder="Search tracking number..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          id="fleet-search-input"
+        />
       </div>
 
-      {/* Trip List */}
+      {/* Add Shipment Button */}
+      <button className="fleet-add-btn" id="fleet-add-btn">
+        + Add Shipment
+      </button>
+
+      {/* Trip Cards */}
       <div className="fleet-drawer-list">
         {loading && !fleetData && (
           <div className="empty-state">
@@ -140,74 +129,124 @@ export function FleetSideDrawer({ fleetData, loading, selectedTripId, onSelectTr
         {!loading && sortedTrips.length === 0 && (
           <div className="empty-state">
             <span className="empty-state-icon">🚛</span>
-            <span className="empty-state-text">No active trips</span>
+            <span className="empty-state-text">No trips found</span>
           </div>
         )}
 
         {sortedTrips.map((trip) => {
-          const prio = priorityConfig[trip.priority_level] || priorityConfig.STANDARD;
-          const statusInfo = getStatusInfo(trip);
+          const prio = PRIORITY_CONFIG[trip.priority_level] || PRIORITY_CONFIG.STANDARD;
           const isSelected = trip.trip_id === selectedTripId;
-          const commodity = commodityIcons[trip.commodity_type] || '📦';
+          const isRerouted = trip.status === 'REROUTED';
+          const commodityIcon = COMMODITY_ICONS[trip.commodity_type] || '📦';
+
+          let etaTime = '—';
+          let etaDate = '';
+          if (trip.estimated_arrival) {
+            const d = new Date(trip.estimated_arrival);
+            etaTime = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            etaDate = d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+          }
 
           return (
             <div
               key={trip.trip_id}
-              className={`fleet-trip-card ${isSelected ? 'selected' : ''} ${trip.status === 'REROUTED' ? 'rerouted' : ''}`}
+              className={`logistics-trip-card ${isSelected ? 'selected' : ''}`}
               onClick={() => onSelectTrip?.(trip.trip_id)}
               id={`fleet-trip-${trip.trip_id.slice(0, 8)}`}
             >
-              {/* Trip card accent bar */}
-              <div className={`fleet-trip-accent ${prio.class}`}></div>
-
-              <div className="fleet-trip-card-content">
-                {/* Top row: vehicle + priority */}
-                <div className="fleet-trip-top-row">
-                  <span className="fleet-trip-vehicle">{trip.vehicle_name}</span>
-                  <span className={`fleet-trip-priority ${prio.class}`}>
-                    {prio.emoji}
-                  </span>
+              {/* Card Header Row */}
+              <div className="logistics-card-header">
+                <div className="logistics-card-icon">
+                  <span>{commodityIcon}</span>
                 </div>
-
-                {/* Route */}
-                <div className="fleet-trip-route">
-                  {commodity} {trip.origin_name} → {trip.dest_name}
+                <div className="logistics-card-id">
+                  {trip.license_plate || trip.vehicle_name}
                 </div>
-
-                {/* Bottom row: status + ETA */}
-                <div className="fleet-trip-bottom-row">
-                  <span className={`fleet-trip-status ${statusInfo.class}`}>
-                    {statusInfo.label}
-                  </span>
-                  {trip.estimated_arrival && (
-                    <span className="fleet-trip-eta">
-                      ETA: {new Date(trip.estimated_arrival).toLocaleTimeString([], {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                      })}
-                    </span>
-                  )}
-                </div>
-
-                {/* Reroute action (inline for rerouted trips) */}
-                {trip.status === 'REROUTED' && (
-                  <div className="fleet-trip-action-row">
-                    <button
-                      className="fleet-trip-action-btn accept"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onTriggerReroute?.(trip.trip_id);
-                      }}
-                    >
-                      ✓ Accept
-                    </button>
-                  </div>
-                )}
+                <span className={`logistics-status-badge ${isRerouted ? 'rerouted' : prio.class}`}>
+                  {isRerouted ? 'Rerouted' : prio.label}
+                </span>
               </div>
+
+              {/* ETA Section */}
+              {isSelected && (
+                <>
+                  <div className="logistics-card-divider"></div>
+                  <div className="logistics-eta-row">
+                    <span className="logistics-eta-label">Estimated Time</span>
+                  </div>
+                  <div className="logistics-eta-display">
+                    <span className="logistics-eta-time">{etaTime}</span>
+                    <span className="logistics-eta-date">{etaDate}</span>
+                  </div>
+
+                  {/* Progress bar */}
+                  <div className="logistics-progress-row">
+                    <div className="logistics-progress-dot origin"></div>
+                    <div className="logistics-progress-track">
+                      <div className="logistics-progress-truck">🚛</div>
+                      <div className="logistics-progress-line"></div>
+                    </div>
+                    <div className="logistics-progress-dot destination">📍</div>
+                  </div>
+
+                  <div className="logistics-route-row">
+                    <div className="logistics-route-place">
+                      <div className="logistics-place-name">{trip.origin_name || 'Origin'}</div>
+                    </div>
+                    <div className="logistics-route-place right">
+                      <div className="logistics-place-name">{trip.dest_name || 'Destination'}</div>
+                    </div>
+                  </div>
+
+                  <div className="logistics-org-row">
+                    <div className="logistics-org-avatar">🏢</div>
+                    <div className="logistics-org-info">
+                      <div className="logistics-org-name">{trip.organization || 'NavNER Logistics'}</div>
+                      <div className="logistics-org-role">Organization</div>
+                    </div>
+                    <div className="logistics-org-actions">
+                      <button className="logistics-org-btn" title="Contact">📞</button>
+                      <button className="logistics-org-btn" title="Message">💬</button>
+                    </div>
+                  </div>
+
+                  {isRerouted && trip.delay_minutes > 0 && (
+                    <div className="logistics-delay-banner">
+                      ⚠️ +{trip.delay_minutes} min delay due to route change
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           );
         })}
       </div>
-    </div>
+
+      {/* Incident Feed — embedded below */}
+      {incidents.length > 0 && (
+        <div className="fleet-incident-section">
+          <div className="fleet-incident-section-title">
+            ⚠️ Active Incidents
+            <span className="panel-badge">{incidents.length}</span>
+          </div>
+          <div className="fleet-incident-list">
+            {incidents.slice(0, 4).map((inc, i) => (
+              <div
+                key={inc.id}
+                className="fleet-incident-row"
+                onClick={() => onIncidentFlyTo?.(inc.lng, inc.lat)}
+              >
+                <span className="fleet-incident-emoji">{INCIDENT_EMOJI[inc.type] || '⚠️'}</span>
+                <div className="fleet-incident-info">
+                  <div className="fleet-incident-type">{(inc.type || '').replace(/_/g, ' ')}</div>
+                  <div className="fleet-incident-time">{timeAgo(inc.created_at)}</div>
+                </div>
+                <span className={`fleet-incident-dot ${inc.status}`}></span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </aside>
   );
 }

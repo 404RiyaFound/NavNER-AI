@@ -126,6 +126,8 @@ class Vehicle(Base):
     name = Column(String(120), nullable=False, default="Unnamed Vehicle")
     type = Column(Enum(VehicleType), nullable=False, default=VehicleType.truck)
     status = Column(Enum(VehicleStatus), nullable=False, default=VehicleStatus.active)
+    license_plate = Column(String(20), nullable=True)
+    organization = Column(String(100), nullable=True)
     current_location = Column(Geometry("POINT", srid=4326), nullable=True)
     last_ping = Column(DateTime(timezone=True), nullable=True)
 

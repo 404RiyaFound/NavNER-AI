@@ -300,6 +300,8 @@ async def seed_demo_data(db: AsyncSession) -> None:
             name="NER-TRUCK-001",
             type=VehicleType.truck,
             status=VehicleStatus.active,
+            license_plate="AS-01-X-1234",
+            organization="Food Corporation of India",
             current_location=ST_MakePoint(91.7362, 26.1445),  # Guwahati
             last_ping=datetime.now(timezone.utc),
         ),
@@ -307,6 +309,8 @@ async def seed_demo_data(db: AsyncSession) -> None:
             name="NER-TRUCK-002",
             type=VehicleType.truck,
             status=VehicleStatus.active,
+            license_plate="ML-05-Y-5678",
+            organization="Indian Oil Corp",
             current_location=ST_MakePoint(91.8933, 25.5788),  # Shillong
             last_ping=datetime.now(timezone.utc),
         ),
@@ -314,6 +318,8 @@ async def seed_demo_data(db: AsyncSession) -> None:
             name="NER-AMB-001",
             type=VehicleType.ambulance,
             status=VehicleStatus.active,
+            license_plate="MN-01-A-9999",
+            organization="NHM Medical Logistics",
             current_location=ST_MakePoint(93.9368, 24.8170),  # Imphal
             last_ping=datetime.now(timezone.utc),
         ),
@@ -321,6 +327,8 @@ async def seed_demo_data(db: AsyncSession) -> None:
             name="NER-UTIL-001",
             type=VehicleType.utility,
             status=VehicleStatus.active,
+            license_plate="AS-06-Z-1111",
+            organization="FEMA Logistics",
             current_location=ST_MakePoint(94.9120, 27.4728),  # Dibrugarh
             last_ping=datetime.now(timezone.utc),
         ),
@@ -328,6 +336,8 @@ async def seed_demo_data(db: AsyncSession) -> None:
             name="NER-TRUCK-003",
             type=VehicleType.truck,
             status=VehicleStatus.inactive,
+            license_plate="AS-12-B-2222",
+            organization="State Supply Chain",
             current_location=ST_MakePoint(92.7176, 26.7509),  # Tezpur
             last_ping=datetime.now(timezone.utc),
         ),

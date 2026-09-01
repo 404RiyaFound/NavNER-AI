@@ -4,8 +4,10 @@
  * Stage 2: AI Predictive Disruption Heatmap + Emergency Alerts
  * Stage 3: Dynamic Rerouting Engine + Fleet Optimization
  * Stage 4: Centralized Analytics Dashboard + Alert Dispatch
+ *
+ * Layout: 3-column (Left Panel | Map | Right Detail Panel)
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useState, useMemo } from 'react';
 import './index.css';
 import { Header } from './components/Header';
 import { MapCanvas } from './components/MapCanvas';
@@ -14,7 +16,9 @@ import { HazardMapOverlay } from './components/HazardMapOverlay';
 import { AlertBanner } from './components/AlertBanner';
 import { FleetRouteViewer } from './components/FleetRouteViewer';
 import { FleetSideDrawer } from './components/FleetSideDrawer';
+import { TripDetailPanel } from './components/TripDetailPanel';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
+import { RouteIntelligencePanel } from './components/RouteIntelligencePanel';
 import { useMapState } from './hooks/useMapState';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useHazardMap } from './hooks/useHazardMap';
@@ -107,10 +111,25 @@ function App() {
     }
   }, [triggerReroute]);
 
+  // Find the currently selected trip
+  const selectedTrip = useMemo(() => {
+    if (!fleetData?.active_trips || !selectedTripId) return null;
+    return fleetData.active_trips.find(t => t.trip_id === selectedTripId) || null;
+  }, [fleetData, selectedTripId]);
+
+  // Find the vehicle for the selected trip (for map camera)
+  const selectedTripVehicle = useMemo(() => {
+    if (!selectedTrip || !vehicles.length) return null;
+    return vehicles.find(v => v.id === selectedTrip.vehicle_id) || null;
+  }, [selectedTrip, vehicles]);
+
   if (loading) {
     return (
       <div className="loading-overlay">
-        <div className="loading-spinner"></div>
+        <div className="loading-spinner-large">
+          <div className="loading-spinner"></div>
+          <div className="loading-label">NavNER Initializing...</div>
+        </div>
       </div>
     );
   }
@@ -132,42 +151,58 @@ function App() {
       {/* Stage 4: Tab-based view switching */}
       {activeView === 'map' ? (
         <div className="app-body">
-          {/* Stage 3: Fleet Side Drawer (left side) */}
+          {/* LEFT: Fleet Side Drawer — logistics mockup style */}
           <FleetSideDrawer
             fleetData={fleetData}
             loading={fleetLoading}
             selectedTripId={selectedTripId}
             onSelectTrip={setSelectedTripId}
-            onTriggerReroute={handleAcceptRoute}
-          />
-
-          <MapCanvas
-            vehicles={vehicles}
             incidents={incidents}
-            onIncidentClick={(incident) => handleFlyTo(incident.lng, incident.lat)}
-            onMapReady={handleMapReady}
+            onIncidentFlyTo={handleFlyTo}
           />
 
-          {/* Stage 3: Route overlay on map */}
-          <FleetRouteViewer
-            map={mapInstance}
-            fleetData={fleetData}
-            selectedTripId={selectedTripId}
-            onSelectTrip={setSelectedTripId}
+          {/* CENTER: Full map with 3D perspective */}
+          <div className="map-wrapper">
+            <MapCanvas
+              vehicles={vehicles}
+              incidents={incidents}
+              onIncidentClick={(incident) => handleFlyTo(incident.lng, incident.lat)}
+              onMapReady={handleMapReady}
+              selectedTripVehicle={selectedTripVehicle}
+              fleetData={fleetData}
+            />
+
+            {/* Stage 3: Route overlay on map */}
+            <FleetRouteViewer
+              map={mapInstance}
+              fleetData={fleetData}
+              selectedTripId={selectedTripId}
+            />
+
+            {/* Stage 2: Hazard Map Overlay Controls */}
+            <HazardMapOverlay
+              map={mapInstance}
+              hazardData={hazardData}
+              enabled={true}
+              showHazard={true}
+            />
+            {/* Uber-style Route Intelligence Panel — appears bottom-center on rerouted/blocked trips */}
+            {selectedTrip && selectedTrip.status === 'REROUTED' && (
+              <RouteIntelligencePanel
+                trip={selectedTrip}
+                onAccept={handleAcceptRoute}
+                onIgnore={() => setSelectedTripId(null)}
+                onHalt={() => {}}
+              />
+            )}
+          </div>
+
+          {/* RIGHT: Trip Detail Panel — logistics mockup right column */}
+          <TripDetailPanel
+            trip={selectedTrip}
+            onClose={() => setSelectedTripId(null)}
             onAcceptRoute={handleAcceptRoute}
             onRevertRoute={handleRevertRoute}
-          />
-
-          {/* Stage 2: Hazard Map Overlay Controls */}
-          <HazardMapOverlay
-            map={mapInstance}
-            hazardData={hazardData}
-            enabled={true}
-          />
-
-          <IncidentPanel
-            incidents={incidents}
-            onFlyTo={handleFlyTo}
           />
         </div>
       ) : (

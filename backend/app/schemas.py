@@ -67,6 +67,8 @@ class VehicleResponse(BaseModel):
     name: str
     type: VehicleType
     status: VehicleStatus
+    license_plate: str | None
+    organization: str | None
     lat: float | None
     lng: float | None
     last_ping: datetime | None
@@ -184,6 +186,8 @@ class FleetTripResponse(BaseModel):
     trip_id: uuid.UUID
     vehicle_id: uuid.UUID
     vehicle_name: str
+    license_plate: str | None
+    organization: str | None
     origin_name: str
     dest_name: str
     commodity_type: str

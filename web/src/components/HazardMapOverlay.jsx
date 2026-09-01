@@ -35,16 +35,34 @@ export function HazardMapOverlay({ map, hazardData, enabled }) {
 
   // Filter features based on slider threshold
   const getFilteredGeoJSON = useCallback(() => {
-    if (!hazardData?.features) {
-      return { type: 'FeatureCollection', features: [] };
-    }
-
+    if (!hazardData?.features) return { type: 'FeatureCollection', features: [] };
     const threshold = minRiskPct / 100;
-    const filtered = hazardData.features.filter(
-      (f) => (f.properties?.composite_score ?? 0) >= threshold
-    );
+    
+    const validFeatures = hazardData.features
+      .filter((f) => (f.properties?.composite_score ?? 0) >= threshold)
+      .map((f) => {
+        // MapLibre strict GeoJSON compliance fix
+        const coords = f.geometry.coordinates;
+        let depth = 0;
+        let curr = coords;
+        while (Array.isArray(curr)) {
+          depth++;
+          curr = curr[0];
+        }
+        
+        const newF = { ...f };
+        if (depth === 3 && f.geometry.type === 'MultiPolygon') {
+          newF.geometry = { ...f.geometry, type: 'Polygon' };
+        } else if (depth === 4 && f.geometry.type === 'Polygon') {
+          newF.geometry = { ...f.geometry, type: 'MultiPolygon' };
+        }
+        return newF;
+      });
 
-    return { type: 'FeatureCollection', features: filtered };
+    return {
+      type: 'FeatureCollection',
+      features: validFeatures,
+    };
   }, [hazardData, minRiskPct]);
 
   // Add/update source and layers on the map
@@ -96,11 +114,11 @@ export function HazardMapOverlay({ map, hazardData, enabled }) {
         'fill-opacity': [
           'match',
           ['get', 'risk_level'],
-          'CRITICAL', RISK_OPACITY.CRITICAL,
-          'HIGH', RISK_OPACITY.HIGH,
-          'MODERATE', RISK_OPACITY.MODERATE,
-          'LOW', RISK_OPACITY.LOW,
-          0.2,
+          'CRITICAL', 0.85,
+          'HIGH', 0.75,
+          'MODERATE', 0.65,
+          'LOW', 0.50,
+          0.3,
         ],
       },
     });
@@ -120,8 +138,8 @@ export function HazardMapOverlay({ map, hazardData, enabled }) {
           'LOW', RISK_COLORS.LOW,
           '#888888',
         ],
-        'line-width': 1.5,
-        'line-opacity': 0.7,
+        'line-width': 2.5,
+        'line-opacity': 1.0,
       },
     });
 

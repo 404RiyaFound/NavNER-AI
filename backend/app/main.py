@@ -94,3 +94,4 @@ async def fleet_monitor_ws(websocket: WebSocket):
 @app.get("/health", tags=["system"])
 async def health_check():
     return {"status": "ok", "service": "navner-ai-backend", "version": "0.4.0"}
+# Trigger reload
