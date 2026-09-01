@@ -15,6 +15,11 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+from app.database import async_session
+from app.models import AlertLog, AlertTier
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 # ── Alert tier definitions ────────────────────────────────────────────────────
@@ -64,7 +69,7 @@ class AlertDispatcher:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    async def process_event(self, event: dict[str, Any]) -> dict[str, Any]:
+    async def process_event(self, event: dict[str, Any], db: AsyncSession | None = None) -> dict[str, Any]:
         """Route an event to the appropriate dispatch tier.
 
         Parameters
@@ -98,11 +103,35 @@ class AlertDispatcher:
             "timestamp": timestamp,
             "dispatched": dispatched,
         }
+        # In-memory log
         self._dispatch_log.append(log_entry)
+
+        # Database persistence
+        tier_enum = AlertTier.CRITICAL if tier == "CRITICAL" else AlertTier.INFORMATIONAL
+        
+        async def _persist(session: AsyncSession):
+            db_log = AlertLog(
+                tier=tier_enum,
+                event_type=event_type,
+                severity=severity,
+                message=event.get("message", ""),
+                source=event.get("source", "navner-ai"),
+                delivery_status="dispatched" if dispatched else "buffered",
+                vehicle_id=event.get("vehicle_id"),
+                trip_id=event.get("trip_id"),
+            )
+            session.add(db_log)
+            await session.commit()
+
+        if db:
+            await _persist(db)
+        else:
+            async with async_session() as session:
+                await _persist(session)
 
         return {"tier": tier, "dispatched": dispatched, "logged": True}
 
-    async def dispatch_batched_summary(self) -> dict[str, Any]:
+    async def dispatch_batched_summary(self, db: AsyncSession | None = None) -> dict[str, Any]:
         """Dispatch all buffered INFORMATIONAL events as a batched summary.
 
         Called periodically (every 60 minutes) by the scheduler.
@@ -154,6 +183,25 @@ class AlertDispatcher:
         else:
             logger.info("[AlertDispatcher] [DEV MODE] Batched summary:\n%s", summary)
             dispatched = True  # Consider logged as dispatched in dev
+
+        # Persist summary event to database
+        async def _persist_summary(session: AsyncSession):
+            db_log = AlertLog(
+                tier=AlertTier.INFORMATIONAL,
+                event_type="BATCHED_SUMMARY",
+                severity="INFO",
+                message=summary,
+                source="navner-ai-scheduler",
+                delivery_status="dispatched" if dispatched else "failed"
+            )
+            session.add(db_log)
+            await session.commit()
+
+        if db:
+            await _persist_summary(db)
+        else:
+            async with async_session() as session:
+                await _persist_summary(session)
 
         count = len(self._batch_buffer)
         self._batch_buffer.clear()
@@ -238,4 +286,4 @@ class AlertDispatcher:
 
 # ── Module-level singleton ────────────────────────────────────────────────────
 # Initialized without SNS in dev mode; reconfigured in main.py if AWS is available
-alert_dispatcher = AlertDispatcher()
+alert_dispatcher = AlertDispatcher(sns_topic_arn=settings.SNS_TOPIC_ARN)
