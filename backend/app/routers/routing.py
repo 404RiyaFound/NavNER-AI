@@ -271,6 +271,18 @@ async def recalculate_trip_route(
             delay_variance_minutes=delay_min,
         )
         db.add(log)
+        
+        # 10.5 Dispatch Reroute Alert
+        from app.alert_dispatcher import alert_dispatcher
+        import asyncio
+        asyncio.create_task(alert_dispatcher.process_event({
+            "event_type": "IMMEDIATE_REROUTE",
+            "severity": "CRITICAL",
+            "message": f"Vehicle {trip.vehicle_id} rerouted. Delay: {delay_min} mins.",
+            "trip_id": str(trip.trip_id),
+            "vehicle_id": str(trip.vehicle_id),
+            "source": "routing_engine",
+        }))
 
     await db.flush()
 

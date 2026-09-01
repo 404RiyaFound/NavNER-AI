@@ -72,6 +72,17 @@ async def create_incident(
     from app.services.reroute_trigger import trigger_incident_reroute
     await trigger_incident_reroute(incident, db)
 
+    # Dispatch alert
+    from app.alert_dispatcher import alert_dispatcher
+    severity = "CRITICAL" if type.value in ["landslide", "bridge_collapse"] else "INFORMATIONAL"
+    await alert_dispatcher.process_event({
+        "event_type": type.value,
+        "severity": severity,
+        "message": description or f"New {type.value} reported.",
+        "source": "field_app",
+        "location": {"lat": lat, "lng": lng}
+    })
+
     # Broadcast new incident to dashboard clients
     await manager.broadcast(
         {
