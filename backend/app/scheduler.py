@@ -24,7 +24,7 @@ from app.models import (
     SpatialGridCell,
 )
 from app.risk_engine import risk_engine
-from app.weather_service import fetch_weather_for_point
+from app.weather_service import fetch_weather_for_grid
 from app.websocket import manager
 
 logger = logging.getLogger(__name__)
@@ -50,15 +50,22 @@ async def run_risk_evaluation() -> dict:
             logger.info("[Scheduler] No grid cells found — skipping evaluation.")
             return {"evaluated_cells": 0, **counts}
 
-        for cell in cells:
+        # Resolve every cell centroid up front, then fetch all weather in one
+        # concurrent, grid-deduplicated pass. This previously ran one sequential
+        # await per cell (~0.7 s each), which exhausted the 30-minute scheduling
+        # interval at roughly 2,500 cells and blocked any grid expansion.
+        import h3
+
+        centroids = [h3.cell_to_latlng(cell.h3_index) for cell in cells]
+        fetch_started = datetime.now(timezone.utc)
+        weather_by_cell = await fetch_weather_for_grid(centroids)
+        fetch_seconds = (datetime.now(timezone.utc) - fetch_started).total_seconds()
+        logger.info(
+            "[Scheduler] Weather fetched for %d cells in %.1fs.", len(cells), fetch_seconds
+        )
+
+        for cell, (lat, lng), weather in zip(cells, centroids, weather_by_cell):
             try:
-                # Get centroid coordinates from H3 index
-                import h3
-                lat, lng = h3.cell_to_latlng(cell.h3_index)
-
-                # Fetch real weather data
-                weather = await fetch_weather_for_point(lat, lng)
-
                 # Build terrain data from cell attributes
                 terrain = {
                     "avg_slope_degrees": cell.avg_slope_degrees,
@@ -138,6 +145,14 @@ async def run_risk_evaluation() -> dict:
         "timestamp": now.isoformat(),
     }
 
+    total_seconds = (datetime.now(timezone.utc) - now).total_seconds()
+    if total_seconds > 30 * 60:
+        logger.warning(
+            "[Scheduler] Risk evaluation took %.0fs, exceeding its 30-minute interval "
+            "(%d cells). Runs will be skipped — reduce grid size or raise the interval.",
+            total_seconds, evaluated,
+        )
+
     # Broadcast risk update to all connected clients
     await manager.broadcast({
         "event": "risk_update",
@@ -170,7 +185,10 @@ async def dispatch_batched_alerts() -> dict:
 
 def start_scheduler() -> None:
     """Start the APScheduler with periodic jobs."""
-    # Risk evaluation every 30 minutes
+    # Risk evaluation every 30 minutes.
+    # max_instances=1 + coalesce prevent a slow run from overlapping the next one
+    # and racing on segment_risk_assessments; misfire_grace_time lets a late run
+    # still fire rather than being dropped silently.
     scheduler.add_job(
         run_risk_evaluation,
         "interval",
@@ -178,6 +196,9 @@ def start_scheduler() -> None:
         id="risk_evaluation",
         name="Periodic risk evaluation",
         replace_existing=True,
+        max_instances=1,
+        coalesce=True,
+        misfire_grace_time=300,
     )
 
     # Stage 4: Batched alert dispatch every 60 minutes

@@ -28,7 +28,7 @@ from app.schemas import (
     HazardFeatureProperties,
     HazardMapResponse,
 )
-from app.weather_service import fetch_weather_for_point
+from app.weather_service import fetch_weather_for_grid
 from app.websocket import manager
 
 logger = logging.getLogger(__name__)
@@ -172,14 +172,14 @@ async def evaluate_grid(
 
     cells = (await db.execute(stmt)).scalars().all()
 
-    for cell in cells:
+    # Resolve centroids up front and fetch all weather in one concurrent,
+    # grid-deduplicated pass. This ran one sequential await per cell previously,
+    # which put the endpoint's latency in linear proportion to grid size.
+    centroids = [h3.cell_to_latlng(cell.h3_index) for cell in cells]
+    weather_by_cell = await fetch_weather_for_grid(centroids)
+
+    for cell, (lat, lng), weather in zip(cells, centroids, weather_by_cell):
         try:
-            # Get centroid from H3 index
-            lat, lng = h3.cell_to_latlng(cell.h3_index)
-
-            # Fetch real weather
-            weather = await fetch_weather_for_point(lat, lng)
-
             # Store weather telemetry record
             weather_record = WeatherTelemetryRecord(
                 h3_index=cell.h3_index,
