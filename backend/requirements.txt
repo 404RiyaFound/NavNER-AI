@@ -5,7 +5,7 @@ psycopg[binary]>=3.2.10
 geoalchemy2==0.15.2
 python-multipart==0.0.9
 websockets==13.0
-pydantic-settings==2.5.2
+pydantic-settings==2.15.0
 python-dotenv==1.0.1
 aiofiles==24.1.0
 # Stage 2 — AI Predictive Disruption Engine
