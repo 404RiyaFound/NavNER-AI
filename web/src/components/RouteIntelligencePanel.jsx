@@ -1,3 +1,5 @@
+import { useState, useRef, useCallback } from 'react';
+
 /**
  * RouteIntelligencePanel — Uber-style smart route suggestions
  *
@@ -47,6 +49,34 @@ function HazardBar({ score }) {
 }
 
 export function RouteIntelligencePanel({ trip, onAccept, onIgnore, onHalt }) {
+  const [isMinimized, setIsMinimized] = useState(false);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragStartPos = useRef({ x: 0, y: 0 });
+
+  const handlePointerDown = (e) => {
+    setIsDragging(true);
+    dragStartPos.current = {
+      x: e.clientX - position.x,
+      y: e.clientY - position.y
+    };
+    e.target.setPointerCapture(e.pointerId);
+  };
+
+  const handlePointerMove = (e) => {
+    if (isDragging) {
+      setPosition({
+        x: e.clientX - dragStartPos.current.x,
+        y: e.clientY - dragStartPos.current.y
+      });
+    }
+  };
+
+  const handlePointerUp = (e) => {
+    setIsDragging(false);
+    e.target.releasePointerCapture(e.pointerId);
+  };
+
   if (!trip) return null;
 
   const isRerouted = trip.status === 'REROUTED';
@@ -89,9 +119,24 @@ export function RouteIntelligencePanel({ trip, onAccept, onIgnore, onHalt }) {
   ];
 
   return (
-    <div className="ri-panel" id="route-intelligence-panel">
-      {/* Banner */}
-      <div className={`ri-banner ${isRerouted ? 'rerouted' : 'warning'}`}>
+    <div 
+      className="ri-panel" 
+      id="route-intelligence-panel"
+      style={{
+        transform: `translate(calc(-50% + ${position.x}px), ${position.y}px)`,
+        cursor: isDragging ? 'grabbing' : 'default',
+        transition: isDragging ? 'none' : 'transform 0.2s cubic-bezier(0.22, 1, 0.36, 1)'
+      }}
+    >
+      {/* Banner - acts as drag handle */}
+      <div 
+        className={`ri-banner ${isRerouted ? 'rerouted' : 'warning'}`}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
+        style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+      >
         <div className="ri-banner-icon">{blockReason.icon}</div>
         <div className="ri-banner-content">
           <div className="ri-banner-title">
@@ -103,7 +148,32 @@ export function RouteIntelligencePanel({ trip, onAccept, onIgnore, onHalt }) {
               : 'Original route blocked — select alternative below'}
           </div>
         </div>
+        <button 
+          className="ri-minimize-btn"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsMinimized(!isMinimized);
+          }}
+          style={{
+            background: 'rgba(255,255,255,0.1)',
+            border: 'none',
+            color: 'white',
+            borderRadius: '50%',
+            width: '28px',
+            height: '28px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            marginLeft: 'auto'
+          }}
+        >
+          {isMinimized ? '▲' : '▼'}
+        </button>
       </div>
+
+      {!isMinimized && (
+        <div className="ri-panel-content" style={{ paddingBottom: '16px' }}>
 
       {/* Current status */}
       <div className="ri-current-status">
@@ -182,6 +252,8 @@ export function RouteIntelligencePanel({ trip, onAccept, onIgnore, onHalt }) {
           🛑 Halt & Wait
         </button>
       </div>
+      </div>
+      )}
     </div>
   );
 }
