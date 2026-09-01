@@ -208,7 +208,7 @@ NavNER-AI/
 
 | Variable       | Default                                                     |
 | -------------- | ----------------------------------------------------------- |
-| `DATABASE_URL` | `postgresql+asyncpg://navner:navner_secret@localhost:5432/navner_ai` |
+| `DATABASE_URL` | `postgresql+psycopg://navner:navner_secret@localhost:5432/navner_ai` |
 | `UPLOAD_DIR`   | `./uploads`                                                 |
 | `CORS_ORIGINS` | `http://localhost:5173,http://localhost:3000`                |
 
@@ -218,6 +218,21 @@ NavNER-AI/
 | -------------- | ----------------------------- |
 | `VITE_API_URL` | `http://localhost:8000`       |
 | `VITE_WS_URL`  | `ws://localhost:8000/ws`      |
+| `VITE_MAP_TILE_URL` | Stadia dark raster tiles (keyless on localhost only) |
+
+Copy `backend/.env.example` and `web/.env.example` to `.env` in their respective
+directories to get started.
+
+> **Already running Postgres locally?** A native install owns `127.0.0.1:5432`,
+> and a specific-address bind beats Docker's wildcard bind — so `localhost:5432`
+> reaches the native server, not the container. The backend then fails with
+> `FATAL: role "navner" does not exist`. Publish the container on a spare port via
+> `docker-compose.override.yml` and point `DATABASE_URL` at it; see
+> `backend/.env.example` for the snippet.
+
+> **Deploying off localhost?** The default basemap tile endpoint authorises only
+> requests with a `localhost` referer and returns HTTP 401 elsewhere, which renders
+> a blank map. Set `VITE_MAP_TILE_URL` to a keyed tile URL before deploying.
 
 ---
 

@@ -7,6 +7,13 @@ import { useEffect, useRef } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
+// Basemap raster tiles. The default Stadia endpoint is keyless on localhost only —
+// it returns HTTP 401 from any other origin. Set VITE_MAP_TILE_URL to a keyed Stadia
+// URL (or another {z}/{x}/{y} raster provider) before deploying anywhere else.
+const MAP_TILE_URL =
+  import.meta.env.VITE_MAP_TILE_URL ||
+  'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png';
+
 // Emoji icons by type
 const VEHICLE_EMOJI = { truck: '🚛', ambulance: '🚑', utility: '🔧' };
 const INCIDENT_EMOJI = { flood: '🌊', landslide: '⛰️', road_damage: '🚧', bridge_collapse: '🌉' };
@@ -28,9 +35,7 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady }) 
         sources: {
           'osm-tiles': {
             type: 'raster',
-            tiles: [
-              'https://tiles.stadiamaps.com/tiles/alidade_smooth_dark/{z}/{x}/{y}.png'
-            ],
+            tiles: [MAP_TILE_URL],
             tileSize: 256,
             attribution: '&copy; <a href="https://stadiamaps.com/">Stadia Maps</a> &copy; <a href="https://openmaptiles.org/">OpenMapTiles</a> &copy; <a href="https://www.openstreetmap.org/copyright">OSM</a>'
           }
