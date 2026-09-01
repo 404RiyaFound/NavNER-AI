@@ -19,7 +19,7 @@ import {
 import { NetworkBadge } from '../components/NetworkBadge';
 import { IncidentForm } from '../components/IncidentForm';
 import { PhotoCapture } from '../components/PhotoCapture';
-import { enqueue, syncQueue, getQueue } from '../services/syncQueue';
+import { enqueue, syncQueue, getQueue, getCachedMapState } from '../services/syncQueue';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import NetInfo from '@react-native-community/netinfo';
@@ -34,6 +34,7 @@ export function FieldReportScreen() {
   const [submitted, setSubmitted] = useState(false);
   const [savedToQueue, setSavedToQueue] = useState(false);
   const [queueCount, setQueueCount] = useState(0);
+  const [cachedIncidents, setCachedIncidents] = useState([]);
 
   // Snackbar animation
   const snackbarAnim = useRef(new Animated.Value(0)).current;
@@ -41,6 +42,7 @@ export function FieldReportScreen() {
   // Native network status monitoring and location fetch
   useEffect(() => {
     updateQueueCount();
+    loadCachedState();
 
     const unsubscribe = NetInfo.addEventListener(state => {
       setIsOnline(state.isConnected && state.isInternetReachable !== false);
@@ -66,6 +68,13 @@ export function FieldReportScreen() {
   const updateQueueCount = async () => {
     const queue = await getQueue();
     setQueueCount(queue.length);
+  };
+
+  const loadCachedState = async () => {
+    const state = await getCachedMapState();
+    if (state && state.incidents) {
+      setCachedIncidents(state.incidents);
+    }
   };
 
   const showSnackbar = useCallback(() => {
@@ -200,6 +209,24 @@ export function FieldReportScreen() {
             <Text style={styles.queueText}>
               📦 {queueCount} report{queueCount > 1 ? 's' : ''} pending sync
             </Text>
+          </View>
+        )}
+
+        {/* Cached Incidents Display */}
+        {cachedIncidents.length > 0 && (
+          <View style={styles.incidentsContainer}>
+            <Text style={styles.incidentsTitle}>Active Regional Incidents ({cachedIncidents.length})</Text>
+            {cachedIncidents.map(inc => (
+              <View key={inc.id} style={styles.incidentCard}>
+                <Text style={styles.incidentCardType}>
+                  {inc.type.replace('_', ' ').toUpperCase()}
+                </Text>
+                {inc.description && <Text style={styles.incidentCardDesc}>{inc.description}</Text>}
+                <Text style={styles.incidentCardMeta}>
+                  {inc.lat.toFixed(4)}°N, {inc.lng.toFixed(4)}°E • {new Date(inc.created_at).toLocaleDateString()}
+                </Text>
+              </View>
+            ))}
           </View>
         )}
       </ScrollView>
@@ -379,5 +406,38 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '500',
     lineHeight: 18,
+  },
+  // Cached Incidents
+  incidentsContainer: {
+    marginTop: 10,
+    gap: 12,
+  },
+  incidentsTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#e8edf5',
+    marginBottom: 4,
+  },
+  incidentCard: {
+    backgroundColor: 'rgba(14, 26, 50, 0.6)',
+    borderWidth: 1,
+    borderColor: 'rgba(59, 130, 246, 0.15)',
+    borderRadius: 10,
+    padding: 14,
+    gap: 6,
+  },
+  incidentCardType: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#ef4444',
+  },
+  incidentCardDesc: {
+    fontSize: 13,
+    color: '#cbd5e1',
+  },
+  incidentCardMeta: {
+    fontSize: 11,
+    color: '#64748b',
+    marginTop: 4,
   },
 });
