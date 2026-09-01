@@ -33,3 +33,6 @@ backend/uploads/*
 
 # Logs
 *.log
+
+# OSRM route geometry cache for telemetry simulation
+backend/.cache/
