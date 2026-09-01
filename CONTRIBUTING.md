@@ -9,7 +9,7 @@ We welcome contributions from everyone, especially first-timers! Whether it's re
 1. **Fork the repository** on GitHub.
 2. **Clone your fork** locally:
    ```bash
-   git clone https://github.com/your-username/NavNER-AI.git
+   git clone https://github.com/YASHK-arch/NavNER-AI.git
    cd NavNER-AI
    ```
 3. **Create a new branch** for your feature or bugfix:
