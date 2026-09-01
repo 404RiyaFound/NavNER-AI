@@ -11,7 +11,7 @@ NavNER-AI is a full-stack GIS operations platform that uses **RandomForest risk 
 [![Issues](https://img.shields.io/github/issues/YASHK-arch/NavNER-AI?style=flat-square&color=e3624b)](https://github.com/YASHK-arch/NavNER-AI/issues)
 [![Open PRs](https://img.shields.io/github/issues-pr/YASHK-arch/NavNER-AI?label=open+PRs&style=flat-square&color=2da44e)](https://github.com/YASHK-arch/NavNER-AI/pulls?q=is%3Apr+is%3Aopen)
 [![Merged PRs](https://img.shields.io/github/issues-pr-closed-raw/YASHK-arch/NavNER-AI?label=merged+PRs&style=flat-square&color=8957e5)](https://github.com/YASHK-arch/NavNER-AI/pulls?q=is%3Apr+is%3Amerged)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](./LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](./LICENSE)
 [![Python](https://img.shields.io/badge/python-3.12-yellow?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![Expo SDK](https://img.shields.io/badge/Expo-SDK%2054-000000?style=flat-square&logo=expo&logoColor=white)](https://expo.dev)
 
