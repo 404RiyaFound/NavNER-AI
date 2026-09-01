@@ -68,6 +68,10 @@ async def create_incident(
     db.add(incident)
     await db.flush()
 
+    # Trigger potential reroutes for active fleets
+    from app.services.reroute_trigger import trigger_incident_reroute
+    await trigger_incident_reroute(incident, db)
+
     # Broadcast new incident to dashboard clients
     await manager.broadcast(
         {
