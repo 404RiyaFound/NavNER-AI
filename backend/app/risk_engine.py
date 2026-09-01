@@ -39,6 +39,39 @@ def _classify_risk(score: float) -> str:
     return "CRITICAL"
 
 
+def classify_hazard(landslide_score: float, flood_score: float) -> dict:
+    """Derive risk level, blockage probability and ranking index from two scores.
+
+    Landslide and flood are largely independent hazards in the NER: a slope
+    failing after sustained rain is not also flooding, and a Barak Valley flood
+    plain does not landslide. Classification therefore keys off the **dominant**
+    hazard. Blending the two (previously ``max * 0.8 + min * 0.2``) diluted a high
+    score toward the weaker one and made HIGH/CRITICAL practically unreachable —
+    a 0.706 landslide score classified MODERATE because flood risk was only 0.31,
+    and CRITICAL required a landslide score above 0.98.
+
+    The blended index is retained as ``composite_score`` because it usefully
+    *ranks* cells within the same level (a cell facing both hazards outranks one
+    facing a single hazard) — it just no longer decides the level.
+    """
+    landslide_score = float(np.clip(landslide_score, 0, 1))
+    flood_score = float(np.clip(flood_score, 0, 1))
+
+    severity = max(landslide_score, flood_score)
+    risk_level = _classify_risk(severity)
+
+    composite = float(np.clip(severity * 0.8 + min(landslide_score, flood_score) * 0.2, 0, 1))
+    blockage_prob = float(np.clip(severity * 1.1 - 0.05, 0, 1))
+
+    return {
+        "severity": round(severity, 4),
+        "composite_score": round(composite, 4),
+        "composite_risk_level": risk_level,
+        "predicted_blockage_probability": round(blockage_prob, 4),
+        "action_required": ACTION_MAP[risk_level],
+    }
+
+
 def _generate_synthetic_training_data(n_samples: int = 2000) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Generate realistic synthetic training data calibrated for NER terrain.
 
@@ -216,15 +249,7 @@ class RiskAssessmentEngine:
         landslide_score = float(np.clip(self._landslide_model.predict(features)[0], 0, 1))
         flood_score = float(np.clip(self._flood_model.predict(features)[0], 0, 1))
 
-        # Composite = weighted combination emphasising the dominant risk
-        composite = max(landslide_score, flood_score) * 0.8 + min(landslide_score, flood_score) * 0.2
-        composite = float(np.clip(composite, 0, 1))
-
-        risk_level = _classify_risk(composite)
-        action = ACTION_MAP[risk_level]
-
-        # Blockage probability is a calibrated function of composite
-        blockage_prob = float(np.clip(composite * 1.1 - 0.05, 0, 1))
+        classification = classify_hazard(landslide_score, flood_score)
 
         primary_factor = self._determine_primary_factor(
             weather_data, terrain_data, landslide_score, flood_score,
@@ -233,11 +258,11 @@ class RiskAssessmentEngine:
         return {
             "landslide_risk_score": round(landslide_score, 4),
             "flood_risk_score": round(flood_score, 4),
-            "composite_score": round(composite, 4),
-            "composite_risk_level": risk_level,
-            "predicted_blockage_probability": round(blockage_prob, 4),
+            "composite_score": classification["composite_score"],
+            "composite_risk_level": classification["composite_risk_level"],
+            "predicted_blockage_probability": classification["predicted_blockage_probability"],
             "primary_contributing_factor": primary_factor,
-            "action_required": action,
+            "action_required": classification["action_required"],
         }
 
     def evaluate_batch(

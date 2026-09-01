@@ -6,6 +6,7 @@ temperature data for arbitrary coordinates via the free Open-Meteo API.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -19,6 +20,20 @@ OPEN_METEO_BASE = "https://api.open-meteo.com/v1/forecast"
 # Default NER corridor centroid (Guwahati region)
 DEFAULT_LAT = 26.14
 DEFAULT_LNG = 91.73
+
+# Open-Meteo's native model resolution is roughly 11 km. H3 resolution-7 cells are
+# ~1.22 km², so many neighbouring cells resolve to the same upstream grid square.
+# Rounding coordinates to this many decimal places (1 dp ≈ 11 km) lets us collapse
+# those into a single request instead of paying a round trip per hexagon.
+WEATHER_GRID_PRECISION = 1
+
+# Cap on simultaneous upstream requests — enough to be fast, few enough to stay
+# polite to a free-tier API.
+MAX_CONCURRENT_REQUESTS = 8
+
+# Retry policy for transient upstream failures (notably HTTP 429 quota limits).
+MAX_RETRIES = 3
+BACKOFF_BASE_SECONDS = 1.5
 
 
 async def fetch_weather_for_point(
@@ -49,10 +64,7 @@ async def fetch_weather_for_point(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(OPEN_METEO_BASE, params=params)
-            resp.raise_for_status()
-            data = resp.json()
+        data = await _get_with_retries(params, timeout=timeout)
 
         current = data.get("current", {})
         hourly = data.get("hourly", {})
@@ -116,10 +128,101 @@ async def fetch_weather_batch(
     -------
     list of weather dicts (same order as input coordinates)
     """
-    import asyncio
-
     tasks = [
         fetch_weather_for_point(lat, lng, timeout=timeout)
         for lat, lng in coordinates
     ]
     return await asyncio.gather(*tasks)
+
+
+async def _get_with_retries(params: dict[str, Any], *, timeout: float) -> dict[str, Any]:
+    """GET the Open-Meteo forecast endpoint, retrying transient failures.
+
+    Retries on HTTP 429 (free-tier quota) and 5xx, honouring ``Retry-After`` when
+    the server supplies it. Raises the final exception if every attempt fails, so
+    the caller decides how to degrade.
+    """
+    last_exc: Exception | None = None
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.get(OPEN_METEO_BASE, params=params)
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPStatusError as exc:
+            last_exc = exc
+            status = exc.response.status_code
+            if status != 429 and status < 500:
+                raise  # client error — retrying will not help
+            delay = BACKOFF_BASE_SECONDS * (2 ** attempt)
+            retry_after = exc.response.headers.get("Retry-After")
+            if retry_after:
+                try:
+                    delay = max(delay, float(retry_after))
+                except ValueError:
+                    pass
+            if attempt < MAX_RETRIES - 1:
+                logger.warning(
+                    "Open-Meteo HTTP %s — retrying in %.1fs (attempt %d/%d)",
+                    status, delay, attempt + 1, MAX_RETRIES,
+                )
+                await asyncio.sleep(delay)
+        except httpx.RequestError as exc:
+            last_exc = exc
+            if attempt < MAX_RETRIES - 1:
+                delay = BACKOFF_BASE_SECONDS * (2 ** attempt)
+                logger.warning(
+                    "Open-Meteo request error (%s) — retrying in %.1fs (attempt %d/%d)",
+                    exc, delay, attempt + 1, MAX_RETRIES,
+                )
+                await asyncio.sleep(delay)
+
+    assert last_exc is not None
+    raise last_exc
+
+
+async def fetch_weather_for_grid(
+    coordinates: list[tuple[float, float]],
+    *,
+    timeout: float = 15.0,
+) -> list[dict[str, Any]]:
+    """Fetch weather for many coordinates concurrently, deduplicating by grid square.
+
+    Coordinates that round to the same ~11 km Open-Meteo grid square share a single
+    upstream request. Requests run concurrently under a semaphore rather than one at
+    a time, which is what made the per-cell sequential loop unusable at grid scale.
+
+    Returns
+    -------
+    list of weather dicts, one per input coordinate, in input order.
+    """
+    if not coordinates:
+        return []
+
+    # Group input indices by their rounded grid key.
+    groups: dict[tuple[float, float], list[int]] = {}
+    for idx, (lat, lng) in enumerate(coordinates):
+        key = (round(lat, WEATHER_GRID_PRECISION), round(lng, WEATHER_GRID_PRECISION))
+        groups.setdefault(key, []).append(idx)
+
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+
+    async def fetch_key(key: tuple[float, float]) -> dict[str, Any]:
+        async with semaphore:
+            return await fetch_weather_for_point(key[0], key[1], timeout=timeout)
+
+    keys = list(groups)
+    results = await asyncio.gather(*(fetch_key(k) for k in keys))
+
+    logger.info(
+        "[Weather] Fetched %d grid squares for %d cells (%.0f%% fewer requests).",
+        len(keys), len(coordinates),
+        100 * (1 - len(keys) / len(coordinates)) if coordinates else 0,
+    )
+
+    out: list[dict[str, Any]] = [{}] * len(coordinates)
+    for key, weather in zip(keys, results):
+        for idx in groups[key]:
+            out[idx] = weather
+    return out

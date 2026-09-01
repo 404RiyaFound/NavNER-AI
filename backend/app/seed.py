@@ -7,6 +7,7 @@ from geoalchemy2.functions import ST_GeomFromText, ST_MakePoint
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.risk_engine import classify_hazard
 from app.models import (
     CommodityType,
     Incident,
@@ -106,23 +107,29 @@ NER_GRID_CELLS = [
      "slope": 30.0, "elevation": 1100, "susceptibility": 0.68},
 ]
 
-# Initial risk assessments (varying levels for demo)
+# Initial risk assessments (varying levels for demo).
+# Only the curated model *inputs* live here — composite_risk_level and
+# predicted_blockage_probability are derived via risk_engine.classify_hazard so
+# the seeded dashboard state always matches what the engine itself would produce.
+# Previously these levels were hardcoded string literals that the engine's own
+# formula contradicted (Aizawl's 0.88/0.32 was labelled CRITICAL but classified
+# HIGH), so the first evaluation silently rewrote the map.
 INITIAL_RISK_DATA = {
-    # (landslide_score, flood_score, risk_level, blockage_prob, factor)
-    "Kamrup Metropolitan": (0.12, 0.25, "LOW", 0.08, "Normal conditions — low terrain risk"),
-    "East Khasi Hills": (0.78, 0.35, "HIGH", 0.72, "Heavy precipitation on steep slope (35°)"),
-    "Ri-Bhoi": (0.62, 0.30, "MODERATE", 0.55, "Elevated landslide conditions (slope 28°, rain 80mm)"),
-    "Imphal West": (0.30, 0.22, "LOW", 0.18, "Normal conditions — moderate terrain"),
-    "Bishnupur": (0.20, 0.18, "LOW", 0.12, "Normal conditions — low terrain risk"),
-    "Dibrugarh": (0.08, 0.45, "MODERATE", 0.35, "Waterlogging risk (rainfall 25mm/hr, low drainage)"),
-    "Tinsukia": (0.10, 0.40, "MODERATE", 0.30, "Waterlogging risk (rainfall 20mm/hr, low drainage)"),
-    "Sonitpur": (0.15, 0.38, "MODERATE", 0.28, "Waterlogging risk — Brahmaputra proximity"),
-    "Churachandpur": (0.72, 0.28, "HIGH", 0.68, "Prolonged rainfall (150mm/24h) on unstable terrain"),
-    "Aizawl": (0.88, 0.32, "CRITICAL", 0.90, "Heavy precipitation on steep slope (40°)"),
-    "Kohima": (0.70, 0.30, "HIGH", 0.65, "Heavy precipitation on steep slope (33°)"),
-    "East Sikkim": (0.92, 0.28, "CRITICAL", 0.95, "Heavy precipitation on steep slope (42°)"),
-    "West Tripura": (0.06, 0.15, "LOW", 0.05, "Normal conditions — flat terrain"),
-    "Cachar": (0.18, 0.52, "MODERATE", 0.42, "Sustained flooding — Barak Valley low elevation"),
+    # (landslide_score, flood_score, factor)
+    "Kamrup Metropolitan": (0.12, 0.25, "Normal conditions — low terrain risk"),
+    "East Khasi Hills": (0.78, 0.35, "Heavy precipitation on steep slope (35°)"),
+    "Ri-Bhoi": (0.62, 0.30, "Elevated landslide conditions (slope 28°, rain 80mm)"),
+    "Imphal West": (0.30, 0.22, "Normal conditions — moderate terrain"),
+    "Bishnupur": (0.20, 0.18, "Normal conditions — low terrain risk"),
+    "Dibrugarh": (0.08, 0.45, "Waterlogging risk (rainfall 25mm/hr, low drainage)"),
+    "Tinsukia": (0.10, 0.40, "Waterlogging risk (rainfall 20mm/hr, low drainage)"),
+    "Sonitpur": (0.15, 0.38, "Waterlogging risk — Brahmaputra proximity"),
+    "Churachandpur": (0.72, 0.28, "Prolonged rainfall (150mm/24h) on unstable terrain"),
+    "Aizawl": (0.88, 0.32, "Heavy precipitation on steep slope (40°)"),
+    "Kohima": (0.70, 0.30, "Heavy precipitation on steep slope (33°)"),
+    "East Sikkim": (0.92, 0.28, "Heavy precipitation on steep slope (42°)"),
+    "West Tripura": (0.06, 0.15, "Normal conditions — flat terrain"),
+    "Cachar": (0.18, 0.52, "Sustained flooding — Barak Valley low elevation"),
 }
 
 
@@ -406,14 +413,15 @@ async def seed_demo_data(db: AsyncSession) -> None:
         # Add initial risk assessment
         risk_data = INITIAL_RISK_DATA.get(cell_info["district"])
         if risk_data:
-            ls_score, fl_score, level, blockage, factor = risk_data
+            ls_score, fl_score, factor = risk_data
+            classification = classify_hazard(ls_score, fl_score)
             risk_assessment = SegmentRiskAssessment(
                 h3_index=h3_index,
                 last_evaluated=now,
                 landslide_risk_score=ls_score,
                 flood_risk_score=fl_score,
-                composite_risk_level=RiskLevel(level),
-                predicted_blockage_probability=blockage,
+                composite_risk_level=RiskLevel(classification["composite_risk_level"]),
+                predicted_blockage_probability=classification["predicted_blockage_probability"],
                 primary_contributing_factor=factor,
             )
             db.add(risk_assessment)
