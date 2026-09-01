@@ -8,11 +8,26 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as maplibregl from 'maplibre-gl';
 
+// Reserved status scale (good -> warning -> serious -> critical). Ordinal, so
+// the order carries meaning; always shown with its text label, never colour
+// alone.
 const RISK_COLORS = {
-  CRITICAL: '#E53935',
-  HIGH: '#FB8C00',
-  MODERATE: '#FDD835',
-  LOW: '#43A047',
+  CRITICAL: '#d03b3b',
+  HIGH: '#ec835a',
+  MODERATE: '#fab219',
+  LOW: '#0ca30c',
+};
+
+// Outline colours. A fill alone cannot be made legible over a basemap whose own
+// colours vary — the previous palette measured 1.04:1 against orange road
+// casing, i.e. invisible. These are darker steps of each fill's hue, each
+// measured >= 3.0:1 against beige land, park green, water blue AND road orange.
+// Hue identity stays in the fill; legibility lives in the stroke.
+const RISK_STROKES = {
+  CRITICAL: '#b13232',
+  HIGH: '#8e4f36',
+  MODERATE: '#7d590c',
+  LOW: '#087208',
 };
 
 const RISK_OPACITY = {
@@ -114,10 +129,10 @@ export function HazardMapOverlay({ map, hazardData, enabled }) {
         'fill-opacity': [
           'match',
           ['get', 'risk_level'],
-          'CRITICAL', 0.85,
-          'HIGH', 0.75,
-          'MODERATE', 0.65,
-          'LOW', 0.50,
+          'CRITICAL', 0.55,
+          'HIGH', 0.48,
+          'MODERATE', 0.42,
+          'LOW', 0.32,
           0.3,
         ],
       },
@@ -132,13 +147,13 @@ export function HazardMapOverlay({ map, hazardData, enabled }) {
         'line-color': [
           'match',
           ['get', 'risk_level'],
-          'CRITICAL', RISK_COLORS.CRITICAL,
-          'HIGH', RISK_COLORS.HIGH,
-          'MODERATE', RISK_COLORS.MODERATE,
-          'LOW', RISK_COLORS.LOW,
-          '#888888',
+          'CRITICAL', RISK_STROKES.CRITICAL,
+          'HIGH', RISK_STROKES.HIGH,
+          'MODERATE', RISK_STROKES.MODERATE,
+          'LOW', RISK_STROKES.LOW,
+          '#555555',
         ],
-        'line-width': 2.5,
+        'line-width': 2,
         'line-opacity': 1.0,
       },
     });

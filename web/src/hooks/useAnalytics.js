@@ -4,7 +4,8 @@
  */
 import { useEffect, useState, useCallback, useRef } from 'react';
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Use a relative URL so requests route through the Vite dev proxy (no CORS).
+const API_BASE = import.meta.env.VITE_API_URL || '';
 
 export function useAnalytics({ enabled = true, refreshInterval = 30000 } = {}) {
   const [consignmentState, setConsignmentState] = useState(null);

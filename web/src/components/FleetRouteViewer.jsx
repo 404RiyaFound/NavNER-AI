@@ -32,10 +32,16 @@ export function FleetRouteViewer({ map, fleetData, selectedTripId }) {
       fleetData.active_trips.forEach((trip) => {
         const tripKey = trip.trip_id.slice(0, 8);
         const isSelected = trip.trip_id === selectedTripId;
+        // With a trip selected, its route is drawn bold and the rest pushed
+        // right back, so "which route is this truck on" is answerable at a glance.
+        const dimmed = Boolean(selectedTripId) && !isSelected;
         const isRerouted = trip.status === 'REROUTED';
 
-        // Original route — dashed dim red line
-        if (trip.original_route && trip.original_route.coordinates?.length > 1) {
+        // Original route — red, meaning "blocked". Only drawn when the trip was
+        // actually rerouted: for a trip still on its original path the original
+        // and current routes are the same line, and painting it red would signal
+        // a blockage that does not exist.
+        if (isRerouted && trip.original_route && trip.original_route.coordinates?.length > 1) {
           const origSourceId = `${ROUTE_SOURCE_PREFIX}orig-${tripKey}`;
           const origLayerId = `${ORIGINAL_LAYER_PREFIX}${tripKey}`;
 
@@ -53,8 +59,8 @@ export function FleetRouteViewer({ map, fleetData, selectedTripId }) {
             source: origSourceId,
             paint: {
               'line-color': '#ef4444',
-              'line-width': isSelected ? 2.5 : 1.5,
-              'line-opacity': isSelected ? 0.5 : 0.2,
+              'line-width': isSelected ? 3 : 1.5,
+              'line-opacity': dimmed ? 0.08 : (isSelected ? 0.75 : 0.25),
               'line-dasharray': [4, 4],
             },
             layout: { 'line-cap': 'round', 'line-join': 'round' },
@@ -84,17 +90,18 @@ export function FleetRouteViewer({ map, fleetData, selectedTripId }) {
             type: 'line',
             source: activeSourceId,
             paint: {
-              'line-color': isRerouted ? '#16a34a' : '#ea580c',  // darker green or dark orange
-              'line-width': isSelected ? 10 : 6,
-              'line-opacity': isSelected ? 0.4 : 0.2,
+              // Casing is a darker shade of the clear-route green.
+              'line-color': '#16a34a',
+              'line-width': isSelected ? 12 : 6,
+              'line-opacity': dimmed ? 0 : (isSelected ? 0.55 : 0.18),
             },
             layout: { 'line-cap': 'round', 'line-join': 'round' },
           });
 
-          // Main colored line
-          // Orange (#f97316) for normal active — logistics mockup style
-          // Green (#22c55e) if rerouted
-          const lineColor = isRerouted ? '#22c55e' : '#f97316';
+          // Green means the corridor is clear and usable; the red original above
+          // means blocked. The route in use is always green, whether or not it
+          // was reached by a reroute.
+          const lineColor = '#22c55e';
 
           map.addLayer({
             id: activeLayerId,
@@ -102,8 +109,8 @@ export function FleetRouteViewer({ map, fleetData, selectedTripId }) {
             source: activeSourceId,
             paint: {
               'line-color': lineColor,
-              'line-width': isSelected ? 6 : 3.5,
-              'line-opacity': isSelected ? 1.0 : 0.55,
+              'line-width': isSelected ? 7 : 3,
+              'line-opacity': dimmed ? 0.22 : 1.0,
             },
             layout: { 'line-cap': 'round', 'line-join': 'round' },
           });

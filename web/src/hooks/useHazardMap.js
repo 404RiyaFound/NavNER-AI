@@ -4,7 +4,8 @@
  */
 import { useState, useEffect, useCallback, useRef } from 'react';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Use a relative URL so requests route through the Vite dev proxy (no CORS).
+const API_URL = import.meta.env.VITE_API_URL || '';
 const REFRESH_INTERVAL = 120_000; // 2 minutes
 
 export function useHazardMap({ district = null, minRisk = 0, enabled = true } = {}) {

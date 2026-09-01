@@ -131,6 +131,20 @@ function App() {
     return vehicles.find(v => v.id === selectedTrip.vehicle_id) || null;
   }, [selectedTrip, vehicles]);
 
+  // Route geometry for the selected trip — memoised so the map camera effect
+  // does not re-run on every render.
+  const selectedTripRoute = useMemo(
+    () => selectedTrip?.current_route?.coordinates ?? null,
+    [selectedTrip],
+  );
+
+  // Selecting a truck on the map resolves it to its active trip, so the route
+  // highlight and detail panel behave exactly as they do from the sidebar.
+  const handleVehicleClick = useCallback((vehicle) => {
+    const trip = fleetData?.active_trips?.find(t => t.vehicle_id === vehicle.id);
+    if (trip) setSelectedTripId(trip.trip_id);
+  }, [fleetData]);
+
   if (loading) {
     return (
       <div className="loading-overlay">
@@ -176,7 +190,9 @@ function App() {
               incidents={incidents}
               onIncidentClick={(incident) => handleFlyTo(incident.lng, incident.lat)}
               onMapReady={handleMapReady}
+              onVehicleClick={handleVehicleClick}
               selectedTripVehicle={selectedTripVehicle}
+              selectedTripRoute={selectedTripRoute}
               fleetData={fleetData}
             />
 

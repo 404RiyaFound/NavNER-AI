@@ -17,6 +17,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select, update
 
 from app.alert_dispatcher import alert_dispatcher
+from app.config import settings
 from app.database import async_session
 from app.models import (
     RiskLevel,
@@ -24,6 +25,7 @@ from app.models import (
     SpatialGridCell,
 )
 from app.risk_engine import risk_engine
+from app.services.route_simulator import run_simulation_tick
 from app.weather_service import fetch_weather_for_grid
 from app.websocket import manager
 
@@ -213,6 +215,31 @@ def start_scheduler() -> None:
         name="Batched informational alert dispatch",
         replace_existing=True,
     )
+
+    # Optional telemetry simulation for demos and local development.
+
+    if settings.SIMULATE_TELEMETRY:
+
+        scheduler.add_job(
+
+            run_simulation_tick,
+
+            "interval",
+
+            seconds=settings.SIM_INTERVAL_SECONDS,
+
+            id="telemetry_simulation",
+
+            name="Simulated vehicle telemetry",
+
+            replace_existing=True,
+
+            max_instances=1,
+
+            coalesce=True,
+
+        )
+
 
     scheduler.start()
     logger.info("[Scheduler] Started — risk evaluation every 30m, alert dispatch every 60m.")

@@ -420,10 +420,7 @@ function SpikeAreaChart({ labels, series }) {
           <div className="spike-tip-time">{labels[hover]}</div>
           {series.map((s) => (
             <div className="spike-tip-row" key={s.key}>
-              <span
-                className="spike-tip-dot"
-                style={{ background: s.color }}
-              />
+              <span className="spike-tip-dot" style={{ background: s.color }} />
               <span className="spike-tip-key">{s.key}</span>
               <span className="spike-tip-val">{s.data[hover]}m</span>
             </div>
@@ -434,10 +431,7 @@ function SpikeAreaChart({ labels, series }) {
       <div className="spike-legend">
         {series.map((s) => (
           <span className="spike-legend-item" key={s.key}>
-            <span
-              className="spike-legend-dot"
-              style={{ background: s.color }}
-            />
+            <span className="spike-legend-dot" style={{ background: s.color }} />
             {s.key}
           </span>
         ))}

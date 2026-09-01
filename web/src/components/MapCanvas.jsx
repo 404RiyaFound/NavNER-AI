@@ -1,8 +1,8 @@
 /**
- * MapCanvas — Full-screen MapLibre GL with 3D Uber-style map
+ * MapCanvas — Full-screen MapLibre GL, locked to a flat 2D view
  *
  * Features:
- * - Pitch 45° Uber-style 3D perspective
+ * - Light vector basemap with POI layers hidden
  * - 3D truck markers with commodity color rings + priority pulse
  * - Click vehicle → zoom into street-level 3D view (pitch 60°)
  * - Animated route travel dot
@@ -17,6 +17,27 @@ import 'maplibre-gl/dist/maplibre-gl.css';
 const MAP_TILE_URL =
   import.meta.env.VITE_MAP_TILE_URL ||
   'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}';
+
+// Retail POI pins are clutter on a logistics map. Place names, road labels and
+// road/water/landcover geometry are all kept — only point-of-interest and
+// house-number layers are hidden.
+const POI_LAYER_PATTERN = /^poi|housenum/i;
+
+// Selecting a trip should land at road level, not at whatever wide regional view
+// happens to contain the whole polyline — a Dibrugarh-Silchar route frames at
+// ~zoom 7, where the road it follows is not drawn at all.
+const ROUTE_VIEW_MIN_ZOOM = 9.5;
+
+// [[lng, lat], ...] -> [[minLng, minLat], [maxLng, maxLat]] for fitBounds.
+function routeBounds(coordinates) {
+  return coordinates.reduce(
+    (b, [lng, lat]) => [
+      [Math.min(b[0][0], lng), Math.min(b[0][1], lat)],
+      [Math.max(b[1][0], lng), Math.max(b[1][1], lat)],
+    ],
+    [[Infinity, Infinity], [-Infinity, -Infinity]],
+  );
+}
 
 const COMMODITY_COLORS = {
   MEDICINE:    '#ef4444',  // red — emergency pharma
@@ -55,13 +76,20 @@ function createTruckSVG(color = '#f97316') {
   </svg>`;
 }
 
-export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, selectedTripVehicle, fleetData }) {
+export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, onVehicleClick, selectedTripVehicle, selectedTripRoute, fleetData }) {
   const mapContainer = useRef(null);
   const mapRef       = useRef(null);
   const vehicleMarkersRef  = useRef({});
   const incidentMarkersRef = useRef({});
   const travelDotRef       = useRef(null);
   const travelAnimRef      = useRef(null);
+  // Held in a ref so a new callback identity does not tear down and rebuild
+  // every marker on each render.
+  const onVehicleClickRef  = useRef(onVehicleClick);
+
+  useEffect(() => {
+    onVehicleClickRef.current = onVehicleClick;
+  }, [onVehicleClick]);
 
   // ── Initialize map ─────────────────────────────────────────────
   useEffect(() => {
@@ -100,43 +128,18 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, se
 
     mapRef.current = map;
     map.on('load', () => {
+      // Hide POI noise so only routing-relevant features remain.
+      for (const layer of map.getStyle().layers ?? []) {
+        if (POI_LAYER_PATTERN.test(layer.id)) {
+          try {
+            map.setLayoutProperty(layer.id, 'visibility', 'none');
+          } catch {
+            // Layer types without a visibility property — nothing to hide.
+          }
+        }
+      }
+
       onMapReady?.(map);
-
-      // --- DEBUG TEST: Direct MapLibre API injection ---
-      fetch('http://localhost:8000/api/v1/analytics/hazard-map')
-        .then(r => r.json())
-        .then(data => {
-          // Normalise depth
-          const normalizedFeatures = data.features.map(f => {
-            let depth = 0;
-            let curr = f.geometry.coordinates;
-            while (Array.isArray(curr)) { depth++; curr = curr[0]; }
-            
-            const newF = { ...f };
-            if (depth === 3 && f.geometry.type === 'MultiPolygon') newF.geometry.type = 'Polygon';
-            if (depth === 4 && f.geometry.type === 'Polygon') newF.geometry.type = 'MultiPolygon';
-            return newF;
-          });
-
-          map.addSource('debug-hazard-source', {
-            type: 'geojson',
-            data: { type: 'FeatureCollection', features: normalizedFeatures }
-          });
-          map.addLayer({
-            id: 'debug-hazard-fill',
-            type: 'fill',
-            source: 'debug-hazard-source',
-            paint: { 'fill-color': '#ffeb3b', 'fill-opacity': 0.7 }
-          });
-          map.addLayer({
-            id: 'debug-hazard-line',
-            type: 'line',
-            source: 'debug-hazard-source',
-            paint: { 'line-color': '#ff0000', 'line-width': 3 }
-          });
-          console.log('[DEBUG] Direct MapLibre GeoJSON injected!', normalizedFeatures.length, 'features');
-        })
-        .catch(e => console.error('[DEBUG] Failed to inject GeoJSON directly:', e));
     }); return () => {
       map.remove();
       mapRef.current = null;
@@ -218,6 +221,12 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, se
           </div>
         `);
 
+      // Clicking the truck selects its trip, which highlights its route and opens
+      // the detail panel — the same outcome as clicking its sidebar card.
+      el.addEventListener('click', () => {
+        onVehicleClickRef.current?.(vehicle);
+      });
+
       const marker = new maplibregl.Marker({ element: el })
         .setLngLat([vehicle.lng, vehicle.lat])
         .setPopup(popup)
@@ -267,13 +276,32 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, se
     });
   }, [incidents, onIncidentClick]);
 
-  // ── Zoom to selected vehicle / trip route ───────────────────────
+  // ── Frame selected trip route, else fly to its vehicle ──────────
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !selectedTripVehicle) return;
+    if (!map) return;
+
+    // A selected trip with geometry is framed on its route, then floored to a
+    // road-legible zoom so the corridor it follows is actually visible.
+    if (selectedTripRoute?.length > 1) {
+      const bounds = routeBounds(selectedTripRoute);
+      const framed = map.cameraForBounds(bounds, { padding: 50 });
+
+      if (framed) {
+        map.easeTo({
+          center: framed.center,
+          zoom: Math.max(framed.zoom, ROUTE_VIEW_MIN_ZOOM),
+          duration: 1400,
+          essential: true,
+        });
+      } else {
+        map.fitBounds(bounds, { padding: 50, duration: 1400, essential: true });
+      }
+      return;
+    }
 
     const v = selectedTripVehicle;
-    if (v.lat == null || v.lng == null) return;
+    if (!v || v.lat == null || v.lng == null) return;
 
     // Smooth camera fly to street-level 3D view — Uber style
     map.easeTo({
@@ -284,7 +312,7 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, se
       duration: 1400,
       easing: t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
     });
-  }, [selectedTripVehicle]);
+  }, [selectedTripVehicle, selectedTripRoute]);
 
   // ── Expose flyTo externally ─────────────────────────────────────
   useEffect(() => {

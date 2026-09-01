@@ -12,4 +12,28 @@ export default defineConfig({
     // node_modules, where the relative worker path resolves.
     exclude: ['maplibre-gl'],
   },
+  server: {
+    // Proxy /api and WebSocket /ws requests to the FastAPI backend.
+    // This means all requests from the browser stay on the same origin
+    // (whatever port Vite picks), so CORS headers are never needed in dev.
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/ws': {
+        target: 'ws://localhost:8000',
+        ws: true,
+        changeOrigin: true,
+      },
+      '/uploads': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/health': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+    },
+  },
 })
