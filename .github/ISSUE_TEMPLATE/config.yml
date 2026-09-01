@@ -1,5 +1,6 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a Security Vulnerability
-    url: https://github.com/your-username/NavNER-AI/security/advisories/new
-    about: Please report security vulnerabilities privately.
+    url: https://github.com/YASHK-arch/NavNER-AI/security/advisories/new
+    about: Please report security vulnerabilities privately. Requires private
+      vulnerability reporting to be enabled on this repository.

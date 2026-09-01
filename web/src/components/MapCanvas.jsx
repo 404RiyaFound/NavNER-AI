@@ -139,6 +139,13 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, on
     }); return () => {
       map.remove();
       mapRef.current = null;
+      // map.remove() destroys every Marker's DOM, so the caches tracking them
+      // must be dropped with it. Without this, an effect re-run on the same
+      // component instance — which StrictMode does on every mount in dev — finds
+      // stale Marker objects in the cache, takes the "already exists" path, and
+      // never re-adds them to the new map. Net effect: no markers at all in dev.
+      vehicleMarkersRef.current = {};
+      incidentMarkersRef.current = {};
     };
   }, []);
 

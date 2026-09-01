@@ -1,6 +1,8 @@
 /**
  * Offline sync queue service.
  * Stores pending incident reports locally and syncs them when connectivity returns.
+ * Updated for Issue #36: adds severity, estimatedClearanceHrs, incidentId fields,
+ * and Firebase mock functions (uploadImageToFirebaseStorage, saveToFirestore).
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
@@ -21,13 +23,18 @@ export async function getQueue() {
 
 /**
  * Add a report to the local sync queue.
+ * Report schema (Issue #36):
+ *   type, severity, description, estimatedClearanceHrs, lat, lng, photoUri
  */
 export async function enqueue(report) {
   const queue = await getQueue();
   const entry = {
     ...report,
+    incident_id: `INC-${Date.now().toString(36).toUpperCase()}-NL`,
     _queuedAt: new Date().toISOString(),
     _id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    sync_status: 'PENDING_FIREBASE_UPLOAD',
+    ai_predicted_clearance_hrs: null,
   };
   queue.push(entry);
   await AsyncStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
@@ -43,8 +50,42 @@ async function dequeue(id) {
   await AsyncStorage.setItem(QUEUE_KEY, JSON.stringify(filtered));
 }
 
+// ---------------------------------------------------------------------------
+// Firebase Mock Functions (Issue #36 — Section 3.1)
+// Replace with real Firebase SDK calls when credentials are available.
+// ---------------------------------------------------------------------------
+
 /**
- * Attempt to sync all queued reports to the backend.
+ * Mock: Upload an image to Firebase Cloud Storage.
+ * @param {string} uri - Local URI of the image.
+ * @returns {Promise<string>} - Firebase Storage URL.
+ */
+export async function uploadImageToFirebaseStorage(uri) {
+  // TODO: Replace with real Firebase Storage upload
+  await new Promise(resolve => setTimeout(resolve, 800));
+  const filename = uri.split('/').pop() || 'incident.jpg';
+  return `gs://ner-logistics.appspot.com/incidents/${filename}`;
+}
+
+/**
+ * Mock: Save a structured incident payload to Firestore.
+ * @param {object} data - The incident report payload.
+ * @returns {Promise<string>} - Firestore document ID.
+ */
+export async function saveToFirestore(data) {
+  // TODO: Replace with real Firestore write
+  await new Promise(resolve => setTimeout(resolve, 600));
+  const docId = `doc-${Date.now().toString(36)}`;
+  console.log('[Firestore Mock] Saved document:', docId, data);
+  return docId;
+}
+
+// ---------------------------------------------------------------------------
+// Two-Tier Sync Logic (Issue #36 — Section 3.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Attempt to sync all queued reports to the backend via Firebase.
  * Returns the number of successfully synced reports.
  */
 export async function syncQueue() {
@@ -55,34 +96,30 @@ export async function syncQueue() {
 
   for (const report of queue) {
     try {
-      const formData = new FormData();
-      formData.append('type', report.type);
-      formData.append('lat', String(report.lat));
-      formData.append('lng', String(report.lng));
-      if (report.description) formData.append('description', report.description);
-
-      // If there's a photo, attach it
+      // Step 1: Upload image to Firebase Storage (if present)
+      let imageUrl = null;
       if (report.photoUri) {
-        const filename = report.photoUri.split('/').pop();
-        formData.append('image', {
-          uri: report.photoUri,
-          name: filename || 'photo.jpg',
-          type: 'image/jpeg',
-        });
+        imageUrl = await uploadImageToFirebaseStorage(report.photoUri);
       }
 
-      const response = await fetch(`${API_URL}/api/v1/incident`, {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-      });
+      // Step 2: Save structured payload to Firestore
+      const payload = {
+        incident_id: report.incident_id,
+        reported_by: 'FIELD_OFFICIAL',
+        timestamp: report._queuedAt,
+        geo_tag: { lat: report.lat, lng: report.lng },
+        incident_type: report.type?.toUpperCase(),
+        severity_level: report.severity?.toUpperCase(),
+        description: report.description,
+        user_estimated_clearance_hrs: report.estimatedClearanceHrs,
+        ai_predicted_clearance_hrs: null,
+        verification_image_url: imageUrl,
+        sync_status: 'SYNCED',
+      };
 
-      if (response.ok) {
-        await dequeue(report._id);
-        synced++;
-      }
+      await saveToFirestore(payload);
+      await dequeue(report._id);
+      synced++;
     } catch (err) {
       // Network still down — stop trying
     }
