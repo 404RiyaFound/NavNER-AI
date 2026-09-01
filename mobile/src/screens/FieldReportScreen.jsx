@@ -1,6 +1,7 @@
 /**
- * Field Report Screen — Main screen for the NER Logistics Field App.
- * Supports offline incident submission with sync queue.
+ * Field Report Screen — Redesigned for Issue #36.
+ * Orange (#FF5B22) dark charcoal theme. Lives inside the bottom sheet on the Map screen.
+ * New fields: severity pills, ETC, geo-tag. Two-tier offline/online Firebase sync.
  */
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
@@ -8,18 +9,18 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   ActivityIndicator,
   Animated,
   Platform,
   StatusBar,
   Alert,
+  SafeAreaView,
 } from 'react-native';
 import { NetworkBadge } from '../components/NetworkBadge';
 import { IncidentForm } from '../components/IncidentForm';
 import { PhotoCapture } from '../components/PhotoCapture';
-import { enqueue, syncQueue, getQueue, getCachedMapState } from '../services/syncQueue';
+import { enqueue, syncQueue, getQueue, uploadImageToFirebaseStorage, saveToFirestore, getCachedMapState } from '../services/syncQueue';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import NetInfo from '@react-native-community/netinfo';
@@ -27,9 +28,15 @@ import NetInfo from '@react-native-community/netinfo';
 export function FieldReportScreen() {
   const [isOnline, setIsOnline] = useState(true);
   const [location, setLocation] = useState(null);
+
+  // Form state — Issue #36 data model
   const [incidentType, setIncidentType] = useState('');
+  const [severity, setSeverity] = useState('');
   const [description, setDescription] = useState('');
+  const [estimatedClearanceHrs, setEstimatedClearanceHrs] = useState('');
   const [photo, setPhoto] = useState(null);
+
+  // UI state
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [savedToQueue, setSavedToQueue] = useState(false);
@@ -38,25 +45,42 @@ export function FieldReportScreen() {
 
   // Snackbar animation
   const snackbarAnim = useRef(new Animated.Value(0)).current;
+  const snackbarMessage = useRef('');
 
-  // Native network status monitoring and location fetch
+  // Network monitoring + location
   useEffect(() => {
     updateQueueCount();
     loadCachedState();
 
-    const unsubscribe = NetInfo.addEventListener(state => {
-      setIsOnline(state.isConnected && state.isInternetReachable !== false);
+    const unsubscribe = NetInfo.addEventListener(async (state) => {
+      const online = state.isConnected && state.isInternetReachable !== false;
+      setIsOnline(online);
+
+      // Auto-sync when coming back online (Issue #36 — Two-Tier Sync Logic)
+      if (online) {
+        const synced = await syncQueue();
+        if (synced > 0) {
+          snackbarMessage.current = `☁️ ${synced} queued report${synced > 1 ? 's' : ''} synced to Firebase!`;
+          showSnackbar('#22C55E');
+          await updateQueueCount();
+        }
+      }
     });
 
     (async () => {
       let { status } = await Location.requestForegroundPermissionsAsync();
       if (status !== 'granted') {
-        Alert.alert('Permission Denied', 'Allow location access to tag incidents.');
+        Alert.alert('Permission Denied', 'Allow location access to geo-tag incidents.');
         return;
       }
       try {
-        let currentLoc = await Location.getCurrentPositionAsync({});
-        setLocation({ lat: currentLoc.coords.latitude, lng: currentLoc.coords.longitude });
+        let currentLoc = await Location.getCurrentPositionAsync({
+          accuracy: Location.Accuracy.High,
+        });
+        setLocation({
+          lat: currentLoc.coords.latitude,
+          lng: currentLoc.coords.longitude,
+        });
       } catch (err) {
         console.warn('Failed to get location', err);
       }
@@ -77,10 +101,10 @@ export function FieldReportScreen() {
     }
   };
 
-  const showSnackbar = useCallback(() => {
+  const showSnackbar = useCallback((color = '#FF5B22') => {
     Animated.sequence([
       Animated.timing(snackbarAnim, { toValue: 1, duration: 300, useNativeDriver: true }),
-      Animated.delay(3000),
+      Animated.delay(3500),
       Animated.timing(snackbarAnim, { toValue: 0, duration: 300, useNativeDriver: true }),
     ]).start();
   }, [snackbarAnim]);
@@ -88,16 +112,14 @@ export function FieldReportScreen() {
   const handleCapture = async () => {
     const { status } = await ImagePicker.requestCameraPermissionsAsync();
     if (status !== 'granted') {
-      Alert.alert('Permission Denied', 'Camera access is required to take photos.');
+      Alert.alert('Permission Denied', 'Camera access is required to capture incident photos.');
       return;
     }
-
     const result = await ImagePicker.launchCameraAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.8,
+      quality: 0.85,
     });
-
-    if (!result.canceled && result.assets && result.assets.length > 0) {
+    if (!result.canceled && result.assets?.length > 0) {
       setPhoto(result.assets[0].uri);
     }
   };
@@ -107,33 +129,52 @@ export function FieldReportScreen() {
       Alert.alert('Missing Field', 'Please select an incident type.');
       return;
     }
+    if (!severity) {
+      Alert.alert('Missing Field', 'Please select a severity level.');
+      return;
+    }
 
     setSubmitting(true);
 
     const report = {
       type: incidentType,
-      lat: location ? location.lat : 26.1445,
-      lng: location ? location.lng : 91.7362,
+      severity,
       description,
+      estimatedClearanceHrs: estimatedClearanceHrs ? parseInt(estimatedClearanceHrs, 10) : null,
+      lat: location?.lat ?? 26.1445,
+      lng: location?.lng ?? 91.7362,
       photoUri: photo,
     };
 
     if (isOnline) {
-      // Simulate online submission
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      setSubmitted(true);
-      setTimeout(() => {
-        resetForm();
-      }, 2000);
+      try {
+        // Two-tier online flow: upload image → save to Firestore
+        let imageUrl = null;
+        if (report.photoUri) {
+          imageUrl = await uploadImageToFirebaseStorage(report.photoUri);
+        }
+        await saveToFirestore({ ...report, verification_image_url: imageUrl });
+        setSubmitted(true);
+        snackbarMessage.current = '✅ Report submitted to Firebase!';
+        showSnackbar('#22C55E');
+        setTimeout(resetForm, 2500);
+      } catch (err) {
+        Alert.alert('Submission Error', 'Failed to submit. Report saved locally.');
+        await enqueue(report);
+        await updateQueueCount();
+        setSavedToQueue(true);
+        snackbarMessage.current = '📦 Report Queued. Will sync when online.';
+        showSnackbar();
+        setTimeout(resetForm, 2500);
+      }
     } else {
-      // Save to offline queue
+      // Offline: save to AsyncStorage queue
       await enqueue(report);
       await updateQueueCount();
       setSavedToQueue(true);
+      snackbarMessage.current = '📦 Report Queued. Will sync when online.';
       showSnackbar();
-      setTimeout(() => {
-        resetForm();
-      }, 2000);
+      setTimeout(resetForm, 2500);
     }
 
     setSubmitting(false);
@@ -141,77 +182,68 @@ export function FieldReportScreen() {
 
   const resetForm = () => {
     setIncidentType('');
+    setSeverity('');
     setDescription('');
+    setEstimatedClearanceHrs('');
     setPhoto(null);
     setSubmitted(false);
     setSavedToQueue(false);
   };
 
-  const getButtonText = () => {
+  const getSubmitLabel = () => {
     if (submitting) return '';
     if (submitted) return '✅ Report Submitted';
-    if (savedToQueue) return '📦 Saved to Sync Queue';
+    if (savedToQueue) return '📦 Report Queued';
     return 'Submit Report';
   };
 
-  const getButtonStyle = () => {
-    if (submitted) return [styles.submitButton, styles.submitSuccess];
-    if (savedToQueue) return [styles.submitButton, styles.submitQueued];
-    if (!incidentType) return [styles.submitButton, styles.submitDisabled];
-    return [styles.submitButton];
-  };
+  const submitDisabled =
+    submitting || submitted || savedToQueue || !incidentType || !severity;
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor="#060d1a" />
+      <StatusBar barStyle="light-content" backgroundColor="#1C1C1C" />
 
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.headerTitle}>NER Logistics Field App</Text>
-          <Text style={styles.headerSubtitle}>Field Incident Reporting</Text>
+          <Text style={styles.headerTitle}>Report Incident</Text>
+          <Text style={styles.headerSub}>Field Incident Reporting</Text>
         </View>
-        <View>
-          <NetworkBadge isOnline={isOnline} />
-        </View>
+        <NetworkBadge isOnline={isOnline} />
       </View>
 
       <ScrollView
-        style={styles.scrollView}
+        style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
-        {/* Map Preview */}
-        <View style={styles.mapPreview}>
-          <View style={styles.mapPlaceholder}>
-            <Text style={styles.mapPin}>📍</Text>
-            <Text style={styles.mapCoords}>
-              {location ? `${location.lat.toFixed(4)}°N, ${location.lng.toFixed(4)}°E` : 'Fetching location...'}
-            </Text>
-            <Text style={styles.mapLabel}>Your Current Location</Text>
-          </View>
-        </View>
-
-        {/* Incident Form */}
-        <IncidentForm
-          incidentType={incidentType}
-          onTypeChange={setIncidentType}
-          description={description}
-          onDescriptionChange={setDescription}
-        />
-
-        {/* Photo Capture */}
-        <PhotoCapture photo={photo} onCapture={handleCapture} />
-
-        {/* Queue Count */}
+        {/* Offline Queue Banner */}
         {queueCount > 0 && (
           <View style={styles.queueBanner}>
-            <Text style={styles.queueText}>
-              📦 {queueCount} report{queueCount > 1 ? 's' : ''} pending sync
+            <Text style={styles.queueBannerIcon}>🕐</Text>
+            <Text style={styles.queueBannerText}>
+              {queueCount} report{queueCount > 1 ? 's' : ''} saved locally — waiting for network
             </Text>
           </View>
         )}
 
+        {/* Incident Form (Issue #36 redesign) */}
+        <IncidentForm
+          incidentType={incidentType}
+          onTypeChange={setIncidentType}
+          severity={severity}
+          onSeverityChange={setSeverity}
+          description={description}
+          onDescriptionChange={setDescription}
+          estimatedClearanceHrs={estimatedClearanceHrs}
+          onEtcChange={setEstimatedClearanceHrs}
+          location={location}
+        />
+
+        {/* Photo Capture */}
+        <PhotoCapture photo={photo} onCapture={handleCapture} />
         {/* Cached Incidents Display */}
         {cachedIncidents.length > 0 && (
           <View style={styles.incidentsContainer}>
@@ -232,39 +264,47 @@ export function FieldReportScreen() {
       </ScrollView>
 
       {/* Submit Button */}
-      <View style={styles.submitContainer}>
+      <View style={styles.submitArea}>
         <TouchableOpacity
-          style={getButtonStyle()}
+          style={[
+            styles.submitBtn,
+            submitDisabled && !submitted && !savedToQueue && styles.submitBtnDisabled,
+            submitted && styles.submitBtnSuccess,
+            savedToQueue && styles.submitBtnQueued,
+          ]}
           onPress={handleSubmit}
-          disabled={submitting || submitted || savedToQueue || !incidentType}
-          activeOpacity={0.8}
+          disabled={submitDisabled}
+          activeOpacity={0.85}
+          accessibilityRole="button"
+          accessibilityLabel="Submit incident report"
         >
           {submitting ? (
-            <ActivityIndicator size="small" color="#ffffff" />
+            <ActivityIndicator size="small" color="#FFFFFF" />
           ) : (
-            <Text style={styles.submitText}>{getButtonText()}</Text>
+            <Text style={styles.submitBtnText}>{getSubmitLabel()}</Text>
           )}
         </TouchableOpacity>
       </View>
 
-      {/* Offline Snackbar */}
+      {/* Snackbar Toast */}
       <Animated.View
         style={[
           styles.snackbar,
           {
             opacity: snackbarAnim,
-            transform: [{
-              translateY: snackbarAnim.interpolate({
-                inputRange: [0, 1],
-                outputRange: [50, 0],
-              }),
-            }],
+            transform: [
+              {
+                translateY: snackbarAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [60, 0],
+                }),
+              },
+            ],
           },
         ]}
+        pointerEvents="none"
       >
-        <Text style={styles.snackbarText}>
-          ⚠️ You are offline. Report saved locally and will sync when connectivity returns.
-        </Text>
+        <Text style={styles.snackbarText}>{snackbarMessage.current}</Text>
       </Animated.View>
     </SafeAreaView>
   );
@@ -273,139 +313,124 @@ export function FieldReportScreen() {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#060d1a',
+    backgroundColor: '#1C1C1C',
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    paddingVertical: 14,
-    backgroundColor: 'rgba(14, 26, 50, 0.92)',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + 10 : 10,
+    paddingBottom: 14,
     borderBottomWidth: 1,
-    borderBottomColor: 'rgba(59, 130, 246, 0.12)',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight + 10 : 14,
+    borderBottomColor: 'rgba(255,255,255,0.06)',
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#e8edf5',
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: -0.3,
   },
-  headerSubtitle: {
+  headerSub: {
     fontSize: 11,
-    color: '#5a6b82',
+    color: '#6B7280',
+    marginTop: 2,
+    fontWeight: '500',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    marginTop: 2,
   },
-  scrollView: {
+  scroll: {
     flex: 1,
   },
   scrollContent: {
     padding: 20,
-    gap: 16,
     paddingBottom: 120,
-  },
-  // Map Preview
-  mapPreview: {
-    borderRadius: 12,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: 'rgba(59, 130, 246, 0.15)',
-  },
-  mapPlaceholder: {
-    height: 140,
-    backgroundColor: 'rgba(14, 26, 50, 0.8)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 4,
-  },
-  mapPin: {
-    fontSize: 28,
-  },
-  mapCoords: {
-    fontSize: 13,
-    color: '#3b82f6',
-    fontWeight: '600',
-    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-  },
-  mapLabel: {
-    fontSize: 11,
-    color: '#5a6b82',
-    marginTop: 2,
+    gap: 2,
   },
   // Queue Banner
   queueBanner: {
-    backgroundColor: 'rgba(245, 158, 11, 0.1)',
-    borderWidth: 1,
-    borderColor: 'rgba(245, 158, 11, 0.2)',
-    borderRadius: 10,
-    padding: 12,
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'rgba(251,191,36,0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(251,191,36,0.2)',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 4,
   },
-  queueText: {
-    fontSize: 13,
-    color: '#f59e0b',
-    fontWeight: '500',
+  queueBannerIcon: {
+    fontSize: 14,
   },
-  // Submit
-  submitContainer: {
+  queueBannerText: {
+    flex: 1,
+    fontSize: 12,
+    color: '#FBBF24',
+    fontWeight: '600',
+  },
+  // Submit Button
+  submitArea: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
     padding: 20,
-    paddingBottom: Platform.OS === 'ios' ? 34 : 20,
-    backgroundColor: 'rgba(6, 13, 26, 0.95)',
+    paddingBottom: Platform.OS === 'ios' ? 36 : 20,
+    backgroundColor: 'rgba(28,28,28,0.97)',
     borderTopWidth: 1,
-    borderTopColor: 'rgba(59, 130, 246, 0.12)',
+    borderTopColor: 'rgba(255,255,255,0.06)',
   },
-  submitButton: {
-    backgroundColor: '#3b82f6',
-    borderRadius: 12,
-    paddingVertical: 16,
+  submitBtn: {
+    backgroundColor: '#FF5B22',
+    borderRadius: 30,
+    paddingVertical: 17,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: '#3b82f6',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 12,
-    elevation: 8,
+    shadowColor: '#FF5B22',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.45,
+    shadowRadius: 14,
+    elevation: 10,
   },
-  submitDisabled: {
-    backgroundColor: 'rgba(59, 130, 246, 0.3)',
+  submitBtnDisabled: {
+    backgroundColor: 'rgba(255,91,34,0.28)',
     shadowOpacity: 0,
     elevation: 0,
   },
-  submitSuccess: {
-    backgroundColor: '#22c55e',
-    shadowColor: '#22c55e',
+  submitBtnSuccess: {
+    backgroundColor: '#22C55E',
+    shadowColor: '#22C55E',
   },
-  submitQueued: {
-    backgroundColor: '#f59e0b',
-    shadowColor: '#f59e0b',
+  submitBtnQueued: {
+    backgroundColor: '#FBBF24',
+    shadowColor: '#FBBF24',
   },
-  submitText: {
+  submitBtnText: {
     fontSize: 16,
-    fontWeight: '700',
-    color: '#ffffff',
+    fontWeight: '800',
+    color: '#FFFFFF',
+    letterSpacing: 0.2,
   },
   // Snackbar
   snackbar: {
     position: 'absolute',
-    bottom: 90,
+    bottom: 100,
     left: 20,
     right: 20,
-    backgroundColor: 'rgba(239, 68, 68, 0.95)',
-    borderRadius: 10,
+    backgroundColor: 'rgba(44,44,46,0.97)',
+    borderRadius: 14,
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 13,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
   snackbarText: {
     fontSize: 13,
-    color: '#ffffff',
-    fontWeight: '500',
+    color: '#FFFFFF',
+    fontWeight: '600',
     lineHeight: 18,
+    textAlign: 'center',
   },
   // Cached Incidents
   incidentsContainer: {
