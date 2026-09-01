@@ -103,14 +103,23 @@ Scan the QR code with Expo Go on your phone, or press `w` for web preview.
 
 ## API Endpoints
 
-| Method | Endpoint              | Description                                      |
-| ------ | --------------------- | ------------------------------------------------ |
-| GET    | `/api/v1/map-state`   | Returns all active vehicles and open incidents    |
-| POST   | `/api/v1/telemetry`   | Ingest a GPS ping from a vehicle                  |
-| POST   | `/api/v1/incident`    | Submit an incident report (multipart form + image)|
-| WS     | `/ws`                 | WebSocket for real-time dashboard updates         |
-| GET    | `/health`             | Health check                                      |
-| GET    | `/docs`               | Swagger API documentation                         |
+| Method | Endpoint                             | Description                                      |
+| ------ | ------------------------------------ | ------------------------------------------------ |
+| GET    | `/api/v1/map-state`                  | Returns all active vehicles and open incidents    |
+| POST   | `/api/v1/telemetry`                  | Ingest a GPS ping from a vehicle                  |
+| POST   | `/api/v1/incident`                   | Submit an incident report (multipart form + image)|
+| GET    | `/api/v1/analytics/hazard-map`       | Returns spatial hazard map (GeoJSON)              |
+| POST   | `/api/v1/analytics/evaluate-grid`    | Trigger batch evaluation of H3 grid cells         |
+| GET    | `/api/v1/dashboard/consignment-state`| Fleet summary and logistics status                |
+| GET    | `/api/v1/dashboard/delay-prediction` | ETA updates based on current hazard data          |
+| GET    | `/api/v1/dashboard/fleet-summary`    | Overall fleet health and dispatch metrics         |
+| GET    | `/api/v1/dashboard/reroute-audit`    | Historical reroute decisions                      |
+| GET    | `/api/v1/dashboard/alert-log`        | Recent critical and informational alerts          |
+| POST   | `/api/v1/routing/calculate-route`    | Request an optimal route given hazard conditions  |
+| GET    | `/api/v1/routing/fleet-status`       | Live tracking of fleet assignment and paths       |
+| WS     | `/ws`                                | WebSocket for real-time dashboard updates         |
+| GET    | `/health`                            | Health check                                      |
+| GET    | `/docs`                              | Swagger API documentation                         |
 
 ### Example: Submit Telemetry
 
@@ -139,12 +148,15 @@ curl -X POST http://localhost:8000/api/v1/incident \
 
 ## Database Schema
 
-| Table       | Key Columns                                                  |
-| ----------- | ------------------------------------------------------------ |
-| `users`     | `id`, `name`, `role`, `auth_token`, `district`               |
-| `vehicles`  | `id`, `name`, `type`, `status`, `current_location` (PostGIS) |
-| `incidents` | `id`, `type`, `location` (PostGIS), `image_url`, `status`    |
-| `telemetry` | `id`, `vehicle_id`, `location` (PostGIS), `speed`, `timestamp` |
+| Table                  | Key Columns                                                  |
+| ---------------------- | ------------------------------------------------------------ |
+| `users`                | `id`, `name`, `role`, `auth_token`, `district`               |
+| `vehicles`             | `id`, `name`, `type`, `status`, `current_location` (PostGIS) |
+| `incidents`            | `id`, `type`, `location` (PostGIS), `image_url`, `status`    |
+| `telemetry`            | `id`, `vehicle_id`, `location` (PostGIS), `speed`, `timestamp` |
+| `spatial_grid_cells`   | `h3_index`, `center_point` (PostGIS), `elevation`, `slope`   |
+| `segment_risk_assessments` | `id`, `grid_cell_id`, `landslide_risk_score`, `flood_risk_score` |
+| `AlertLog`             | `id`, `tier`, `event_type`, `severity`, `message`, `timestamp` |
 
 ---
 
@@ -161,25 +173,41 @@ NavNER-AI/
 │   │   ├── schemas.py       # Pydantic schemas
 │   │   ├── websocket.py     # Connection manager
 │   │   ├── seed.py          # Demo data seeder
+│   │   ├── risk_engine.py   # Stage 2: RandomForest risk classification
+│   │   ├── routing_engine.py# Stage 3: A* pathfinding and rerouting
+│   │   ├── alert_dispatcher.py # Stage 4: Alert dispatch and SNS
+│   │   ├── scheduler.py     # Background CRON tasks
+│   │   ├── weather_service.py # Open-Meteo integration
 │   │   └── routers/
+│   │       ├── analytics.py # Stage 2/4 Map analytics and dispatch
+│   │       ├── dashboard.py # Stage 4 KPIs and delay predictions
+│   │       ├── routing.py   # Stage 3 Routes and fleet status
 │   │       ├── telemetry.py
 │   │       ├── incidents.py
 │   │       └── map_state.py
 │   ├── uploads/             # Local photo storage
 │   ├── requirements.txt
-│   ├── Dockerfile
-│   └── .env
+│   └── Dockerfile
 ├── web/                     # React command center
 │   ├── src/
 │   │   ├── App.jsx
 │   │   ├── index.css        # Dark theme design system
 │   │   ├── components/
+│   │   │   ├── AlertBanner.jsx
+│   │   │   ├── AnalyticsDashboard.jsx
+│   │   │   ├── FleetRouteViewer.jsx
+│   │   │   ├── FleetSideDrawer.jsx
+│   │   │   ├── HazardMapOverlay.jsx
 │   │   │   ├── Header.jsx
 │   │   │   ├── MapCanvas.jsx
-│   │   │   └── IncidentPanel.jsx
+│   │   │   ├── RouteIntelligencePanel.jsx
+│   │   │   └── TripDetailPanel.jsx
 │   │   └── hooks/
-│   │       ├── useWebSocket.js
-│   │       └── useMapState.js
+│   │       ├── useAnalytics.js
+│   │       ├── useFleetStatus.js
+│   │       ├── useHazardMap.js
+│   │       ├── useMapState.js
+│   │       └── useWebSocket.js
 │   └── .env
 ├── mobile/                  # React Native field app
 │   ├── App.js
@@ -187,13 +215,18 @@ NavNER-AI/
 │       ├── screens/
 │       │   └── FieldReportScreen.jsx
 │       ├── components/
-│       │   ├── NetworkBadge.jsx
 │       │   ├── IncidentForm.jsx
 │       │   └── PhotoCapture.jsx
 │       └── services/
 │           └── syncQueue.js
+├── infra/                   # AWS CDK Infrastructure (Stage 4)
+│   ├── app.py
+│   ├── lambda/              # Data processing Lambdas
+│   ├── sql/                 # Redshift external schema and views
+│   └── stacks/              # CDK Stacks (Ingestion, Redshift, StepFunctions)
 ├── docs/
-│   └── problem_statement.md
+│   ├── problem_statement.md
+│   └── problems.md
 ├── prds/
 │   └── stage-1.md
 ├── docker-compose.yml
