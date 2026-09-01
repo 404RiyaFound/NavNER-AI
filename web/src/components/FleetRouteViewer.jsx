@@ -115,22 +115,31 @@ export function FleetRouteViewer({ map, fleetData, selectedTripId }) {
     });
     }; // end renderRoutes
 
-    // Wait for map style to be fully loaded before adding layers
+    // Poll until the style is queryable, then add the layers.
+    //
+    // This deliberately does not gate on `map.loaded()`. The map only reaches
+    // this component via onMapReady, which fires inside map.on('load') — so
+    // 'load' has already happened. `map.loaded()` also reports false while any
+    // tiles are still in flight. The previous code read that as "not loaded
+    // yet" and waited on map.once('load', ...) for an event that had already
+    // fired, so no route layer was ever added.
+    let cancelled = false;
+    let pollTimer = null;
+
     const tryRender = () => {
+      if (cancelled) return;
       if (map.isStyleLoaded()) {
         renderRoutes();
       } else {
-        setTimeout(tryRender, 300);
+        pollTimer = setTimeout(tryRender, 300);
       }
     };
 
-    if (map.loaded()) {
-      tryRender();
-    } else {
-      map.once('load', tryRender);
-    }
+    tryRender();
 
     return () => {
+      cancelled = true;
+      if (pollTimer) clearTimeout(pollTimer);
       for (const layerId of layerIdsRef.current) {
         try { if (map.getLayer(layerId)) map.removeLayer(layerId); } catch(_) {}
       }
