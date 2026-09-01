@@ -13,6 +13,11 @@ import { useEffect, useRef, useCallback } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 
+// Basemap raster tiles. Can be overridden via environment variables for deployment.
+const MAP_TILE_URL =
+  import.meta.env.VITE_MAP_TILE_URL ||
+  'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}';
+
 const COMMODITY_COLORS = {
   MEDICINE:    '#ef4444',  // red — emergency pharma
   FOOD_GRAINS: '#3b82f6',  // blue — FCI grains
@@ -69,7 +74,7 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, se
         sources: {
           'google-satellite': {
             type: 'raster',
-            tiles: ['https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'],
+            tiles: [MAP_TILE_URL],
             tileSize: 256,
             attribution: '&copy; Google',
           },
