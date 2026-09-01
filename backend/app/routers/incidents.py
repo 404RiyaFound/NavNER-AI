@@ -21,8 +21,8 @@ router = APIRouter(prefix="/api/v1", tags=["incidents"])
 @router.post("/incident", response_model=IncidentResponse, status_code=201)
 async def create_incident(
     type: IncidentType = Form(...),
-    lat: float = Form(...),
-    lng: float = Form(...),
+    lat: float = Form(..., ge=-90, le=90),
+    lng: float = Form(..., ge=-180, le=180),
     description: str = Form(None),
     reported_by: str = Form(None),
     image: UploadFile | None = File(None),
@@ -67,6 +67,11 @@ async def create_incident(
     )
     db.add(incident)
     await db.flush()
+
+    # `location` was assigned a SQL expression (ST_MakePoint), so it is expired
+    # after the flush. Load it eagerly here — the downstream reroute trigger reads
+    # it, and an implicit lazy load would raise MissingGreenlet under asyncio.
+    await db.refresh(incident, ["location"])
 
     # Trigger potential reroutes for active fleets
     from app.services.reroute_trigger import trigger_incident_reroute
