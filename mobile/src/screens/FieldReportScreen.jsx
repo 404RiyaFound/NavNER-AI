@@ -20,12 +20,13 @@ import { NetworkBadge } from '../components/NetworkBadge';
 import { IncidentForm } from '../components/IncidentForm';
 import { PhotoCapture } from '../components/PhotoCapture';
 import { enqueue, syncQueue, getQueue } from '../services/syncQueue';
-
-// Mock GPS location (Guwahati area) — in production, use expo-location
-const MOCK_LOCATION = { lat: 26.1445, lng: 91.7362 };
+import * as Location from 'expo-location';
+import * as ImagePicker from 'expo-image-picker';
+import NetInfo from '@react-native-community/netinfo';
 
 export function FieldReportScreen() {
   const [isOnline, setIsOnline] = useState(true);
+  const [location, setLocation] = useState(null);
   const [incidentType, setIncidentType] = useState('');
   const [description, setDescription] = useState('');
   const [photo, setPhoto] = useState(null);
@@ -37,10 +38,29 @@ export function FieldReportScreen() {
   // Snackbar animation
   const snackbarAnim = useRef(new Animated.Value(0)).current;
 
-  // Check network status (mock toggle for demo)
-  // In production, use @react-native-community/netinfo
+  // Native network status monitoring and location fetch
   useEffect(() => {
     updateQueueCount();
+
+    const unsubscribe = NetInfo.addEventListener(state => {
+      setIsOnline(state.isConnected && state.isInternetReachable !== false);
+    });
+
+    (async () => {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Allow location access to tag incidents.');
+        return;
+      }
+      try {
+        let currentLoc = await Location.getCurrentPositionAsync({});
+        setLocation({ lat: currentLoc.coords.latitude, lng: currentLoc.coords.longitude });
+      } catch (err) {
+        console.warn('Failed to get location', err);
+      }
+    })();
+
+    return () => unsubscribe();
   }, []);
 
   const updateQueueCount = async () => {
@@ -56,9 +76,21 @@ export function FieldReportScreen() {
     ]).start();
   }, [snackbarAnim]);
 
-  const handleCapture = () => {
-    // Mock photo capture
-    setPhoto('https://picsum.photos/400/300');
+  const handleCapture = async () => {
+    const { status } = await ImagePicker.requestCameraPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'Camera access is required to take photos.');
+      return;
+    }
+
+    const result = await ImagePicker.launchCameraAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      setPhoto(result.assets[0].uri);
+    }
   };
 
   const handleSubmit = async () => {
@@ -71,8 +103,8 @@ export function FieldReportScreen() {
 
     const report = {
       type: incidentType,
-      lat: MOCK_LOCATION.lat,
-      lng: MOCK_LOCATION.lng,
+      lat: location ? location.lat : 26.1445,
+      lng: location ? location.lng : 91.7362,
       description,
       photoUri: photo,
     };
@@ -106,10 +138,6 @@ export function FieldReportScreen() {
     setSavedToQueue(false);
   };
 
-  const toggleNetwork = () => {
-    setIsOnline(prev => !prev);
-  };
-
   const getButtonText = () => {
     if (submitting) return '';
     if (submitted) return '✅ Report Submitted';
@@ -134,9 +162,9 @@ export function FieldReportScreen() {
           <Text style={styles.headerTitle}>NER Logistics Field App</Text>
           <Text style={styles.headerSubtitle}>Field Incident Reporting</Text>
         </View>
-        <TouchableOpacity onPress={toggleNetwork}>
+        <View>
           <NetworkBadge isOnline={isOnline} />
-        </TouchableOpacity>
+        </View>
       </View>
 
       <ScrollView
@@ -149,9 +177,9 @@ export function FieldReportScreen() {
           <View style={styles.mapPlaceholder}>
             <Text style={styles.mapPin}>📍</Text>
             <Text style={styles.mapCoords}>
-              {MOCK_LOCATION.lat.toFixed(4)}°N, {MOCK_LOCATION.lng.toFixed(4)}°E
+              {location ? `${location.lat.toFixed(4)}°N, ${location.lng.toFixed(4)}°E` : 'Fetching location...'}
             </Text>
-            <Text style={styles.mapLabel}>Your Current Location — Guwahati, Assam</Text>
+            <Text style={styles.mapLabel}>Your Current Location</Text>
           </View>
         </View>
 

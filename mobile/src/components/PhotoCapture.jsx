@@ -1,6 +1,5 @@
 /**
  * Photo capture button with thumbnail preview.
- * Uses a mock implementation since we can't access actual camera in dev.
  */
 import React from 'react';
 import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
