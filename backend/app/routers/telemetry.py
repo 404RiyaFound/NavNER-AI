@@ -2,9 +2,9 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from geoalchemy2.functions import ST_MakePoint
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -24,6 +24,13 @@ async def ingest_telemetry(
     Receive a GPS ping from a vehicle, store it as a telemetry record,
     update the vehicle's current location, and broadcast to dashboard clients.
     """
+    # Reject telemetry for a nonexistent vehicle
+    vehicle = await db.get(Vehicle, payload.vehicle_id)
+    if vehicle is None:
+        raise HTTPException(
+            status_code=404, detail=f"Vehicle {payload.vehicle_id} not found"
+        )
+
     point = ST_MakePoint(payload.lng, payload.lat)
     now = datetime.now(timezone.utc)
 
