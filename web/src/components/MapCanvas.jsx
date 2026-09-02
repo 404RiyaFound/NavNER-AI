@@ -9,9 +9,10 @@
  * - Road block / calamity warning markers
  * - Street-level detail tiles at high zoom
  */
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import { TacticalWeatherOverlay } from './TacticalWeatherOverlay';
 
 // Basemap raster tiles. Can be overridden via environment variables for deployment.
 const MAP_TILE_URL =
@@ -62,6 +63,7 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, se
   const incidentMarkersRef = useRef({});
   const travelDotRef       = useRef(null);
   const travelAnimRef      = useRef(null);
+  const [mapInstance, setMapInstance] = useState(null);
 
   // ── Initialize map ─────────────────────────────────────────────
   useEffect(() => {
@@ -100,6 +102,7 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, se
 
     mapRef.current = map;
     map.on('load', () => {
+      setMapInstance(map);
       onMapReady?.(map);
 
       // --- DEBUG TEST: Direct MapLibre API injection ---
@@ -295,5 +298,10 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, se
     }
   });
 
-  return <div ref={mapContainer} className="map-container" id="map-canvas" />;
+  return (
+    <>
+      <div ref={mapContainer} className="map-container" id="map-canvas" />
+      {mapInstance && <TacticalWeatherOverlay map={mapInstance} />}
+    </>
+  );
 }
