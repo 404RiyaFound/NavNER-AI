@@ -20,6 +20,7 @@ from geoalchemy2.functions import ST_MakePoint
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.govt_models import FleetVehicle, GovtVehicleClass
 from app.models import (
     CommodityType,
     TripPriority,
@@ -160,12 +161,34 @@ def _plan() -> list[tuple[str, VehicleClass, VehicleType, float, Corridor]]:
     return roster
 
 
-async def seed_government_fleet(db: AsyncSession) -> dict:
-    """Provision the scenario fleet. Idempotent on licence plate."""
+async def seed_government_fleet(db: AsyncSession, govt_db: AsyncSession) -> dict:
+    """Provision the scenario fleet in both databases. Idempotent on licence plate.
+
+    Writes FleetVehicle rows to the Fleet Manager database — the scenario is
+    demo data, but it is provisioned the same way a real registration is, so
+    the two databases never disagree about which vehicles exist.
+
+    "Already present" is decided against the fleet-manager database, not
+    NavNER's — that is the source of truth for what was provisioned. A
+    vehicle seeded before this dual-write existed is in NavNER's database but
+    not the fleet-manager one; it is backfilled into the fleet-manager
+    database on the next seed call rather than silently skipped, and without
+    disturbing its existing NavNER Vehicle/Trip rows.
+    """
     roster = _plan()
     plates = [r[0] for r in roster]
 
-    existing = {
+    existing_govt = {
+        p
+        for (p,) in (
+            await govt_db.execute(
+                select(FleetVehicle.license_plate).where(
+                    FleetVehicle.license_plate.in_(plates)
+                )
+            )
+        ).all()
+    }
+    existing_navner = {
         p
         for (p,) in (
             await db.execute(
@@ -176,9 +199,35 @@ async def seed_government_fleet(db: AsyncSession) -> dict:
 
     created = 0
     trips_created = 0
+    backfilled = 0
 
     for index, (plate, vclass, chassis, tons, corridor) in enumerate(roster):
-        if plate in existing:
+        if plate in existing_govt:
+            continue
+
+        if plate in existing_navner:
+            # Present in NavNER from before this dual-write existed. Backfill
+            # the fleet-manager record only — do not touch the existing
+            # Vehicle/Trip rows, which may carry live position or trip state
+            # by now.
+            govt_db.add(
+                FleetVehicle(
+                    license_plate=plate,
+                    name=plate,
+                    organization=(
+                        "Food Corporation of India"
+                        if vclass is VehicleClass.HEAVY_TRUCK
+                        else "NDRF / State Disaster Response"
+                    ),
+                    vehicle_class=GovtVehicleClass(vclass.value),
+                    cargo_capacity_tons=tons,
+                    depot_origin=corridor.origin_name,
+                    target_district=corridor.district,
+                    synced_to_navner=True,
+                    created_at=_staggered_created_at(index, len(roster)),
+                )
+            )
+            backfilled += 1
             continue
 
         vehicle = Vehicle(
@@ -219,7 +268,22 @@ async def seed_government_fleet(db: AsyncSession) -> dict:
         )
         trips_created += 1
 
+        govt_db.add(
+            FleetVehicle(
+                license_plate=plate,
+                name=plate,
+                organization=vehicle.organization,
+                vehicle_class=GovtVehicleClass(vclass.value),
+                cargo_capacity_tons=tons,
+                depot_origin=corridor.origin_name,
+                target_district=corridor.district,
+                synced_to_navner=True,
+                created_at=vehicle.created_at,
+            )
+        )
+
     await db.commit()
+    await govt_db.commit()
 
     total = (
         await db.execute(
@@ -237,6 +301,7 @@ async def seed_government_fleet(db: AsyncSession) -> dict:
         "requested": len(roster),
         "created": created,
         "trips_created": trips_created,
-        "already_present": len(existing),
+        "already_present": len(existing_govt),
+        "backfilled_to_govt_db": backfilled,
         "total_in_scenario": total,
     }
