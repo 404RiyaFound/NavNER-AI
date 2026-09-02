@@ -273,3 +273,50 @@ class GovtDashboardSummary(BaseModel):
     blocks: list[GovtKpiBlock]
     deployment_by_district: list[dict[str, object]]
     commodities_in_transit: list[dict[str, object]]
+
+
+class GovtTransitTransition(BaseModel):
+    """One state change in a vehicle's journey."""
+
+    at: datetime
+    kind: str            # DISPATCHED | REROUTED | ETA_REVISED
+    detail: str
+    delay_minutes: int | None = None
+    old_eta: datetime | None = None
+    new_eta: datetime | None = None
+
+
+class GovtTransitVehicle(BaseModel):
+    """Full transit record for one vehicle, including its transition history."""
+
+    vid: str
+    vehicle_id: str
+    trip_id: str | None = None
+    vehicle_class: str
+    commodity: str | None = None
+    priority: str | None = None
+    origin: str | None = None
+    destination: str | None = None
+    target_district: str | None = None
+    depot_origin: str | None = None
+    cargo_capacity_tons: float | None = None
+    organization: str | None = None
+    status: str
+    current_coords: dict[str, float] | None = None
+    estimated_arrival: datetime | None = None
+    last_rerouted_at: datetime | None = None
+    last_ping: datetime | None = None
+    reroute_count: int = 0
+    total_delay_minutes: int = 0
+    local_pickup_linked: str | None = None
+    transitions: list[GovtTransitTransition] = []
+
+
+class GovtTransitLogResponse(BaseModel):
+    """Payload for GET /api/v1/govt/transit-log."""
+
+    generated_at: datetime
+    vehicle_count: int
+    total_reroutes: int
+    total_delay_minutes: int
+    vehicles: list[GovtTransitVehicle]

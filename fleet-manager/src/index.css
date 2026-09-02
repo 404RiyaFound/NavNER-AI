@@ -269,3 +269,114 @@ table.govt-table td.num, table.govt-table th.num { text-align: right; font-varia
   color: var(--down);
   font-size: 13px;
 }
+
+/* ── Transit summary ──────────────────────────────────────────────────────── */
+.transit-panel { margin: 0 10px 14px; }
+
+.panel-head.transit-head {
+  display: flex; justify-content: space-between; align-items: center;
+  text-align: left;
+}
+.transit-head-meta {
+  display: flex; align-items: center; gap: 6px;
+  font-weight: 600; font-size: 11px; letter-spacing: 0.4px;
+}
+.live-dot { width: 8px; height: 8px; display: inline-block; }
+.live-dot.on  { background: #22C55E; box-shadow: 0 0 0 2px rgba(34,197,94,0.35); }
+.live-dot.off { background: #EF4444; }
+
+.transit-warn {
+  background: #FEF3C7;
+  border-bottom: 1px solid #FCD34D;
+  color: #92400E;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.transit-totals {
+  display: flex; gap: 18px; flex-wrap: wrap;
+  padding: 7px 10px;
+  background: #FAFAFA;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+
+/* Bounded height so a 50-vehicle fleet does not push the page to absurd
+   length; the header stays put while the body scrolls. */
+.transit-scroll { max-height: 460px; overflow: auto; }
+
+table.transit-table { font-size: 12px; }
+table.transit-table thead th {
+  position: sticky; top: 0;
+  background: #EEF2FF;
+  border-bottom: 1px solid var(--border-strong);
+  z-index: 1;
+}
+table.transit-table td { white-space: nowrap; }
+.transit-row { cursor: pointer; }
+.transit-row:hover { background: #F9FAFB; }
+.transit-row .expander { color: var(--ink-muted); text-align: center; }
+.mono { font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 11px; }
+
+/* Marks a row touched by a live event, so the operator can see what moved. */
+.transit-row.just-changed { background: #ECFDF5; }
+.transit-row.just-changed td:first-child { box-shadow: inset 3px 0 0 #22C55E; }
+
+.chip {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  border: 1px solid rgba(0,0,0,0.08);
+}
+
+.transit-detail-row td { background: #F9FAFB; border-bottom: 2px solid var(--border); }
+.transit-detail { padding: 9px 12px 12px 34px; }
+.transit-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 5px 18px;
+  margin-bottom: 9px;
+}
+/* Label above value rather than beside it. Trip and vehicle IDs are UUIDs, and
+   side-by-side they overflowed their grid cell and collided with the next
+   label. */
+.transit-detail-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  font-size: 12px;
+}
+.transit-detail-grid span {
+  color: var(--ink-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.transit-detail-grid code {
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.transition-title {
+  font-weight: 700; font-size: 12px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 3px; margin-bottom: 5px;
+}
+ol.transition-list { list-style: none; margin: 0; padding: 0; }
+.transition {
+  display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap;
+  padding: 3px 0 3px 10px;
+  border-left: 2px solid var(--border-strong);
+  font-size: 12px;
+}
+.transition.kind-REROUTED { border-left-color: #EAB308; }
+.transition.kind-DISPATCHED { border-left-color: #3B82F6; }
+.transition-kind { font-weight: 700; min-width: 88px; }
+.transition-time { color: var(--ink-muted); font-size: 11px; min-width: 118px; }
+.transition-detail { flex: 1 1 220px; }
+.transition-delay { color: var(--down); font-weight: 600; }
+.transition-eta { color: var(--ink-muted); font-size: 11px; }

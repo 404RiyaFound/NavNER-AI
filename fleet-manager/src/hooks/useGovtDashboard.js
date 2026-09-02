@@ -14,9 +14,10 @@ async function getJson(path) {
   return res.json();
 }
 
-export function useGovtDashboard({ zone = 'all', status = '' } = {}) {
+export function useGovtDashboard({ zone = 'all', status = '', commodity = '' } = {}) {
   const [summary, setSummary] = useState(null);
   const [fleet, setFleet] = useState(null);
+  const [transit, setTransit] = useState(null);
   const [loading, setLoading] = useState(true);
   // Held and surfaced, not swallowed. A government dashboard showing zeroes
   // because a fetch failed is worse than one that says it could not load.
@@ -29,23 +30,30 @@ export function useGovtDashboard({ zone = 'all', status = '' } = {}) {
       if (zone) params.set('zone', zone);
       if (status) params.set('status', status);
 
-      const [s, f] = await Promise.all([
+      const transitParams = new URLSearchParams(params);
+      if (commodity && commodity !== 'All Commodities') {
+        transitParams.set('commodity', commodity);
+      }
+
+      const [s, f, t] = await Promise.all([
         getJson('/api/v1/govt/dashboard-summary'),
         getJson(`/api/v1/govt/active-fleet?${params.toString()}`),
+        getJson(`/api/v1/govt/transit-log?${transitParams.toString()}`),
       ]);
       setSummary(s);
       setFleet(f);
+      setTransit(t);
       setError(null);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
-  }, [zone, status]);
+  }, [zone, status, commodity]);
 
   useEffect(() => { load(); }, [load]);
 
-  return { summary, fleet, loading, error, reload: load };
+  return { summary, fleet, transit, setTransit, loading, error, reload: load };
 }
 
 export async function registerVehicle(payload) {

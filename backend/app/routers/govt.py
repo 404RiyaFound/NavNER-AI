@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import (
+    RerouteLog,
     RiskLevel,
     SegmentRiskAssessment,
     TripStatus,
@@ -34,6 +35,9 @@ from app.models import (
 from app.services.govt_fleet_seed import seed_government_fleet
 from app.schemas import (
     GovtActiveFleetResponse,
+    GovtTransitLogResponse,
+    GovtTransitTransition,
+    GovtTransitVehicle,
     GovtDashboardSummary,
     GovtFleetRegisterRequest,
     GovtFleetVehicle,
@@ -447,3 +451,162 @@ async def seed_scenario_fleet(db: AsyncSession = Depends(get_db)) -> dict:
     tops the fleet up instead of duplicating it.
     """
     return await seed_government_fleet(db)
+
+
+@router.get("/transit-log", response_model=GovtTransitLogResponse)
+async def get_transit_log(
+    zone: str | None = Query(None, description="'assam_flood', 'all', or a district"),
+    status: str | None = Query(None, description="'deployed' or a TripStatus"),
+    commodity: str | None = Query(None, description="Commodity filter"),
+    db: AsyncSession = Depends(get_db),
+) -> GovtTransitLogResponse:
+    """Per-vehicle transit detail with the full transition history.
+
+    The KPI blocks answer "how many"; this answers "which vehicle, where, and
+    what has happened to it". Each vehicle carries its reroute audit trail from
+    `reroute_logs`, so a dispatcher can see why an ETA moved rather than only
+    that it did.
+
+    The same zone/status semantics as /active-fleet, so the dashboard's filter
+    controls drive both without translation.
+    """
+    stmt = (
+        select(
+            Vehicle.id,
+            Vehicle.license_plate,
+            Vehicle.name,
+            Vehicle.vehicle_class,
+            Vehicle.cargo_capacity_tons,
+            Vehicle.target_district,
+            Vehicle.depot_origin,
+            Vehicle.organization,
+            Vehicle.status,
+            Vehicle.last_ping,
+            ST_Y(Vehicle.current_location).label("lat"),
+            ST_X(Vehicle.current_location).label("lng"),
+            VehicleTrip.trip_id,
+            VehicleTrip.origin_name,
+            VehicleTrip.dest_name,
+            VehicleTrip.commodity_type,
+            VehicleTrip.priority_level,
+            VehicleTrip.status.label("trip_status"),
+            VehicleTrip.estimated_arrival,
+            VehicleTrip.last_rerouted_at,
+        )
+        .join(VehicleTrip, VehicleTrip.vehicle_id == Vehicle.id)
+        .where(Vehicle.status == VehicleStatus.active)
+        .order_by(VehicleTrip.last_rerouted_at.desc().nullslast())
+    )
+
+    if status == "deployed" or status is None:
+        stmt = stmt.where(
+            VehicleTrip.status.in_([TripStatus.IN_TRANSIT, TripStatus.REROUTED])
+        )
+    else:
+        stmt = stmt.where(VehicleTrip.status == status.upper())
+
+    rows = [r for r in (await db.execute(stmt)).all() if _zone_matches(zone, r.target_district)]
+
+    if commodity and commodity not in ("All Commodities", "all"):
+        rows = [r for r in rows if r.commodity_type and r.commodity_type.value == commodity]
+
+    # One query for every trip's audit trail rather than one per vehicle.
+    trip_ids = [r.trip_id for r in rows if r.trip_id]
+    logs_by_trip: dict[str, list] = {}
+    if trip_ids:
+        for log in (
+            await db.execute(
+                select(RerouteLog)
+                .where(RerouteLog.trip_id.in_(trip_ids))
+                .order_by(RerouteLog.created_at.desc())
+            )
+        ).scalars().all():
+            logs_by_trip.setdefault(str(log.trip_id), []).append(log)
+
+    # Handover pairing, same rule as /active-fleet.
+    pickups_by_district: dict[str, list[str]] = {}
+    for r in rows:
+        if r.vehicle_class in LAST_MILE_CLASSES and r.target_district:
+            pickups_by_district.setdefault(r.target_district, []).append(
+                r.license_plate or str(r.id)
+            )
+    cursor: dict[str, int] = {}
+
+    vehicles: list[GovtTransitVehicle] = []
+    total_reroutes = 0
+    total_delay = 0
+
+    for r in rows:
+        logs = logs_by_trip.get(str(r.trip_id), [])
+        transitions = [
+            GovtTransitTransition(
+                at=log.created_at,
+                kind="REROUTED",
+                detail=log.trigger_reason,
+                delay_minutes=log.delay_variance_minutes,
+                old_eta=log.old_eta,
+                new_eta=log.new_eta,
+            )
+            for log in logs
+        ]
+        # Dispatch is the first transition every vehicle has, and without it a
+        # trip with no reroutes would show an empty history rather than "on its
+        # original route".
+        transitions.append(
+            GovtTransitTransition(
+                at=r.last_rerouted_at or r.last_ping or datetime.now(timezone.utc),
+                kind="DISPATCHED",
+                detail=f"Dispatched {r.origin_name} to {r.dest_name}",
+            )
+        )
+
+        delay = sum(log.delay_variance_minutes or 0 for log in logs)
+        total_reroutes += len(logs)
+        total_delay += delay
+
+        linked = None
+        if r.vehicle_class is VehicleClass.HEAVY_TRUCK:
+            pool = pickups_by_district.get(r.target_district or "")
+            if pool:
+                d = r.target_district or ""
+                idx = cursor.get(d, 0)
+                cursor[d] = idx + 1
+                linked = pool[idx % len(pool)]
+
+        vehicles.append(
+            GovtTransitVehicle(
+                vid=r.license_plate or str(r.id),
+                vehicle_id=str(r.id),
+                trip_id=str(r.trip_id) if r.trip_id else None,
+                vehicle_class=r.vehicle_class.value if r.vehicle_class else "UNCLASSIFIED",
+                commodity=r.commodity_type.value if r.commodity_type else None,
+                priority=r.priority_level.value if r.priority_level else None,
+                origin=r.origin_name,
+                destination=r.dest_name,
+                target_district=r.target_district,
+                depot_origin=r.depot_origin,
+                cargo_capacity_tons=r.cargo_capacity_tons,
+                organization=r.organization,
+                status=r.trip_status.value if r.trip_status else r.status.value,
+                current_coords=(
+                    {"lat": round(r.lat, 5), "lng": round(r.lng, 5)}
+                    if r.lat is not None and r.lng is not None
+                    else None
+                ),
+                estimated_arrival=r.estimated_arrival,
+                last_rerouted_at=r.last_rerouted_at,
+                last_ping=r.last_ping,
+                reroute_count=len(logs),
+                total_delay_minutes=delay,
+                local_pickup_linked=linked,
+                transitions=transitions,
+            )
+        )
+
+    return GovtTransitLogResponse(
+        generated_at=datetime.now(timezone.utc),
+        vehicle_count=len(vehicles),
+        total_reroutes=total_reroutes,
+        total_delay_minutes=total_delay,
+        vehicles=vehicles,
+    )
