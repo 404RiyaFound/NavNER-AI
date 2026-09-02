@@ -21,6 +21,7 @@ import { NetworkBadge } from '../components/NetworkBadge';
 import { IncidentForm } from '../components/IncidentForm';
 import { PhotoCapture } from '../components/PhotoCapture';
 import { enqueue, syncQueue, getQueue, uploadImageToFirebaseStorage, saveToFirestore, getCachedMapState } from '../services/syncQueue';
+import { dispatchSatelliteSms, syncPendingSatelliteImages } from '../services/satelliteSms';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import NetInfo from '@react-native-community/netinfo';
@@ -63,6 +64,15 @@ export function FieldReportScreen() {
           snackbarMessage.current = `☁️ ${synced} queued report${synced > 1 ? 's' : ''} synced to Firebase!`;
           showSnackbar('#22C55E');
           await updateQueueCount();
+        }
+
+        // Issue #74: push any photos that went out over satellite SMS with
+        // the image left pending. Runs on the same reconnect event as the
+        // normal queue sync above.
+        const imagesSynced = await syncPendingSatelliteImages();
+        if (imagesSynced > 0) {
+          snackbarMessage.current = `📷 ${imagesSynced} satellite report photo${imagesSynced > 1 ? 's' : ''} synced!`;
+          showSnackbar('#22C55E');
         }
       }
     });
@@ -168,12 +178,27 @@ export function FieldReportScreen() {
         setTimeout(resetForm, 2500);
       }
     } else {
-      // Offline: save to AsyncStorage queue
-      await enqueue(report);
-      await updateQueueCount();
-      setSavedToQueue(true);
-      snackbarMessage.current = '📦 Report Queued. Will sync when online.';
-      showSnackbar();
+      // Fully offline. Try the satellite-SMS bridge first (issue #74) — it
+      // gets the hazard onto the dashboard within an SMS's transit time
+      // rather than whenever this phone next sees a signal, which in the
+      // scenario this exists for could be hours. If SMS genuinely is not
+      // available (no SIM, a simulator), fall back to the ordinary queue so
+      // the report is not lost either way.
+      try {
+        const { incidentId, smsResult } = await dispatchSatelliteSms(report);
+        setSavedToQueue(true);
+        snackbarMessage.current =
+          smsResult === 'sent'
+            ? `📡 ${incidentId} sent via satellite SMS. Photo queued for sync.`
+            : `📦 ${incidentId} saved locally. Photo queued — SMS was not sent.`;
+        showSnackbar(smsResult === 'sent' ? '#22C55E' : '#FBBF24');
+      } catch (err) {
+        await enqueue(report);
+        await updateQueueCount();
+        setSavedToQueue(true);
+        snackbarMessage.current = '📦 Report Queued. Will sync when online.';
+        showSnackbar();
+      }
       setTimeout(resetForm, 2500);
     }
 
