@@ -8,9 +8,10 @@
  * - Road block / calamity warning markers
  * - POI layer suppression (logistics-only view)
  */
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect, useRef, useCallback, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import { TacticalWeatherOverlay } from './TacticalWeatherOverlay';
 
 // OpenFreeMap positron: free, no API key, clean 2D navigation style.
 // Override via VITE_MAP_STYLE_URL env var for custom deployments.
@@ -81,6 +82,8 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, on
   const incidentMarkersRef = useRef({});
   const travelDotRef       = useRef(null);
   const travelAnimRef      = useRef(null);
+  const [mapInstance, setMapInstance] = useState(null);
+
   // Held in a ref so a new callback identity does not tear down and rebuild
   // every marker on each render.
   const onVehicleClickRef  = useRef(onVehicleClick);
@@ -111,6 +114,8 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, on
 
     mapRef.current = map;
     map.on('load', () => {
+      setMapInstance(map);
+
       // Suppress POI clutter so only routing-relevant labels remain.
       for (const layer of map.getStyle().layers ?? []) {
         if (POI_LAYER_PATTERN.test(layer.id)) {
@@ -306,5 +311,10 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, on
     }
   });
 
-  return <div ref={mapContainer} className="map-container" id="map-canvas" />;
+  return (
+    <>
+      <div ref={mapContainer} className="map-container" id="map-canvas" />
+      {mapInstance && <TacticalWeatherOverlay map={mapInstance} />}
+    </>
+  );
 }
