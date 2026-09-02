@@ -10,7 +10,15 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.database import async_session, engine
 from app.models import Base
-from app.routers import analytics, dashboard, incidents, map_state, routing, telemetry
+from app.routers import (
+    analytics,
+    dashboard,
+    govt,
+    incidents,
+    map_state,
+    routing,
+    telemetry,
+)
 from app.scheduler import start_scheduler, stop_scheduler
 from app.seed import seed_demo_data
 from app.websocket import manager
@@ -80,6 +88,7 @@ app.include_router(map_state.router)
 app.include_router(analytics.router)
 app.include_router(routing.router)
 app.include_router(dashboard.router)
+app.include_router(govt.router)
 
 
 # ── WebSocket endpoint ─────────────────────────────────────────────────────────

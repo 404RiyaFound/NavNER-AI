@@ -36,3 +36,8 @@ backend/uploads/*
 
 # OSRM route geometry cache for telemetry simulation
 backend/.cache/
+
+# fleet-manager portal
+fleet-manager/node_modules/
+fleet-manager/dist/
+fleet-manager/.env
