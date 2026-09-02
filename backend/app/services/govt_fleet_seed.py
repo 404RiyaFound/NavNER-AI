@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 from geoalchemy2.functions import ST_MakePoint
 from sqlalchemy import func, select
@@ -95,6 +96,25 @@ FLOOD_CORRIDORS: list[Corridor] = [
     ),
 ]
 
+# Registration dates are staggered across the last two 30-day windows so the
+# dashboard's period-over-period growth column has a real prior period to
+# compare against. The whole 50-vehicle roster is declared simulation (§3.2), so
+# giving it a plausible registration history is part of the scenario rather than
+# invented reporting — the growth figure is then computed from these rows like
+# any other, not hardcoded.
+SEED_HISTORY_DAYS = 60
+
+
+def _staggered_created_at(index: int, total: int) -> datetime:
+    """Spread registrations over the history window, oldest first."""
+    now = datetime.now(timezone.utc)
+    # Bias slightly toward the recent window so growth reads positive for most
+    # districts, which is the realistic shape of a provisioning drive.
+    fraction = (index / max(total - 1, 1)) ** 0.8
+    days_ago = SEED_HISTORY_DAYS * (1 - fraction)
+    return now - timedelta(days=days_ago, minutes=index)
+
+
 TRUNK_FLEET_SIZE = 30
 LAST_MILE_FLEET_SIZE = 20
 
@@ -157,7 +177,7 @@ async def seed_government_fleet(db: AsyncSession) -> dict:
     created = 0
     trips_created = 0
 
-    for plate, vclass, chassis, tons, corridor in roster:
+    for index, (plate, vclass, chassis, tons, corridor) in enumerate(roster):
         if plate in existing:
             continue
 
@@ -178,6 +198,7 @@ async def seed_government_fleet(db: AsyncSession) -> dict:
             # Start every vehicle at its depot; the simulator advances it from
             # there once SIMULATE_TELEMETRY is on.
             current_location=ST_MakePoint(*corridor.origin),
+            created_at=_staggered_created_at(index, len(roster)),
         )
         db.add(vehicle)
         await db.flush()

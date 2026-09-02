@@ -14,7 +14,7 @@ point of the split.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from geoalchemy2.functions import ST_X, ST_Y
@@ -63,6 +63,49 @@ LAST_MILE_CLASSES = {
     VehicleClass.NDRF_BOAT,
     VehicleClass.AMBULANCE,
 }
+
+
+# Growth is measured over this window against the one immediately before it.
+# 30 days is long enough that a provisioning drive shows up and short enough
+# that the figure still describes current activity.
+GROWTH_WINDOW_DAYS = 30
+
+
+async def _district_growth(db: AsyncSession) -> dict[str, float | None]:
+    """Per-district % growth in registrations, current window vs the previous.
+
+    Returns None for a district with no registrations in the prior window —
+    percentage growth from zero is undefined, and rendering it as a number would
+    invent a trend. The dashboard shows those as an em dash.
+    """
+    now = datetime.now(timezone.utc)
+    current_start = now - timedelta(days=GROWTH_WINDOW_DAYS)
+    prior_start = now - timedelta(days=2 * GROWTH_WINDOW_DAYS)
+
+    async def _counts(start, end):
+        rows = (
+            await db.execute(
+                select(Vehicle.target_district, func.count().label("count"))
+                .where(
+                    Vehicle.target_district.isnot(None),
+                    Vehicle.created_at.isnot(None),
+                    Vehicle.created_at >= start,
+                    Vehicle.created_at < end,
+                )
+                .group_by(Vehicle.target_district)
+            )
+        ).all()
+        return {d: c for d, c in rows}
+
+    current = await _counts(current_start, now)
+    prior = await _counts(prior_start, current_start)
+
+    growth: dict[str, float | None] = {}
+    for district in set(current) | set(prior):
+        before = prior.get(district, 0)
+        after = current.get(district, 0)
+        growth[district] = None if before == 0 else round(100 * (after - before) / before, 2)
+    return growth
 
 
 def _zone_matches(zone: str | None, district: str | None) -> bool:
@@ -319,7 +362,10 @@ async def get_dashboard_summary(
         else 0
     )
 
-    district_rows = [{"label": d, "count": c} for d, c in by_district]
+    growth = await _district_growth(db)
+    district_rows = [
+        {"label": d, "count": c, "growth_pct": growth.get(d)} for d, c in by_district
+    ]
     class_rows = [
         {"label": cls.value if cls else "UNCLASSIFIED", "count": c}
         for cls, c in by_class

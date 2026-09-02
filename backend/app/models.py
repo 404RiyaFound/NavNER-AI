@@ -153,6 +153,14 @@ class Vehicle(Base):
     cargo_capacity_tons = Column(Float, nullable=True)
     depot_origin = Column(String(120), nullable=True)
     target_district = Column(String(120), nullable=True)
+    # Registration timestamp. The VAHAN-style dashboard shows a "% Growth"
+    # column per district, which is only computable against a prior period —
+    # without this the column could only ever be fabricated.
+    created_at = Column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=lambda: datetime.now(timezone.utc),
+    )
 
     # Relationships
     telemetry_records = relationship("Telemetry", back_populates="vehicle")
