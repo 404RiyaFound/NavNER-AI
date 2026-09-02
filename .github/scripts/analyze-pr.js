@@ -72,7 +72,13 @@ async function askGroq(prompt, retries = 5, defaultDelayMs = 10000) {
       continue;
     }
 
-    throw new Error(`Groq API error (Status ${response.status}): ${errorText}`);
+    const err = new Error(`Groq API error (Status ${response.status}): ${errorText}`);
+    // A 429 that survives every retry is the provider's daily quota, not a
+    // defect in this script. Marked so the top-level handler can skip the
+    // analysis instead of failing the pull request. Any other status stays a
+    // real error.
+    if (response.status === 429) err.rateLimited = true;
+    throw err;
   }
 }
 
@@ -1279,14 +1285,22 @@ CRITICAL OUTPUT RULES — MUST FOLLOW EXACTLY:
 
 
 run().catch(err => {
-
+  // Quota exhaustion is a vendor condition, not a problem with the pull
+  // request. This analysis is advisory triage — it labels and comments, it does
+  // not verify anything — so failing the PR for it puts a red cross on work
+  // that is fine, and trains reviewers to ignore red crosses.
+  if (err && err.rateLimited) {
+    console.warn(
+      'RepoOwl analysis skipped: the Groq daily token quota is exhausted.\n' +
+      'This says nothing about the pull request. Re-run this workflow once the ' +
+      'quota resets, or comment "/analyze" to trigger it again.\n' +
+      `Provider response: ${err.message}`
+    );
+    process.exit(0);
+  }
 
   console.error('Workflow failed:', err);
-
-
   process.exit(1);
-
-
 });
 
 
