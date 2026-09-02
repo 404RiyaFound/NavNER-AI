@@ -2,15 +2,17 @@
  * Map Screen — Full-screen dark fleet tracking map with Uber-style bottom sheet.
  * Issue #36: Full-screen MapView, animated truck markers, tap-to-select truck,
  * bottom sheet with truck info card, orange "Accept Reroute" CTA.
+ * Issue #68: positions, trip detail and route geometry are now the real
+ * fleet from the backend (useFleetTracking) instead of mockFleet's hardcoded
+ * trucks and a local random-walk simulation.
  */
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   Dimensions,
-  Animated,
   ScrollView,
   Platform,
   StatusBar,
@@ -18,36 +20,22 @@ import {
 import MapView, { Marker, Polyline, PROVIDER_DEFAULT } from 'react-native-maps';
 import { TruckMarker } from '../components/TruckMarker';
 import BottomSheet from '../components/BottomSheet';
-import { FLEET_TRUCKS } from '../services/mockFleet';
+import { useFleetTracking } from '../hooks/useFleetTracking';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
-
-// Simulate truck position drift (mock live tracking)
-function useLiveFleet(initialTrucks) {
-  const [trucks, setTrucks] = useState(initialTrucks);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setTrucks(prev =>
-        prev.map(t => ({
-          ...t,
-          lat: t.lat + (Math.random() - 0.5) * 0.0005,
-          lng: t.lng + (Math.random() - 0.5) * 0.0005,
-        }))
-      );
-    }, 3000);
-    return () => clearInterval(interval);
-  }, []);
-
-  return trucks;
-}
 
 export function MapScreen() {
   const [selectedTruck, setSelectedTruck] = useState(null);
   const [rerouteAccepted, setRerouteAccepted] = useState({});
   const mapRef = useRef(null);
   const bottomSheetRef = useRef(null);
-  const trucks = useLiveFleet(FLEET_TRUCKS);
+  const { trucks, loading, error } = useFleetTracking();
+
+  // selectedTruck is a snapshot taken on tap; refresh it from the latest poll
+  // so the bottom sheet does not freeze on stale ETA/delay after a 5s tick.
+  const liveSelectedTruck = selectedTruck
+    ? trucks.find((t) => t.vehicleId === selectedTruck.vehicleId) || selectedTruck
+    : null;
 
   const handleTruckPress = useCallback((truck) => {
     setSelectedTruck(truck);
@@ -80,8 +68,9 @@ export function MapScreen() {
     setRerouteAccepted(prev => ({ ...prev, [truckId]: true }));
   }, []);
 
-  const riskColor = (risk) =>
-    risk >= 75 ? '#EF4444' : risk >= 40 ? '#FF5B22' : '#22C55E';
+  // Real delay minutes, not the fabricated 0-100 risk score this replaced.
+  const delayColor = (minutes) =>
+    minutes >= 20 ? '#EF4444' : minutes >= 5 ? '#FF5B22' : '#22C55E';
 
   const statusColor = (status) =>
     status === 'DELAYED' ? '#EF4444' :
@@ -127,29 +116,22 @@ export function MapScreen() {
           </Marker>
         ))}
 
-        {/* Rerouted truck route overlay (dashed orange) */}
-        {selectedTruck?.rerouted && (
+        {/* Rerouted truck route: solid green current path, dashed red
+            original path — real trip geometry from the routing engine, not
+            three points offset from the truck's own coordinates. */}
+        {liveSelectedTruck?.currentRoute && (
           <Polyline
-            coordinates={[
-              { latitude: selectedTruck.lat, longitude: selectedTruck.lng },
-              { latitude: selectedTruck.lat + 0.03, longitude: selectedTruck.lng + 0.04 },
-              { latitude: selectedTruck.lat + 0.06, longitude: selectedTruck.lng + 0.03 },
-            ]}
-            strokeColor="#FF5B22"
-            strokeWidth={3}
-            lineDashPattern={[8, 6]}
+            coordinates={liveSelectedTruck.currentRoute}
+            strokeColor={liveSelectedTruck.rerouted ? '#22C55E' : '#F97316'}
+            strokeWidth={4}
           />
         )}
-        {/* Clear route overlay (green) */}
-        {selectedTruck && !selectedTruck.rerouted && (
+        {liveSelectedTruck?.rerouted && liveSelectedTruck.originalRoute && (
           <Polyline
-            coordinates={[
-              { latitude: selectedTruck.lat, longitude: selectedTruck.lng },
-              { latitude: selectedTruck.lat + 0.03, longitude: selectedTruck.lng + 0.02 },
-              { latitude: selectedTruck.lat + 0.05, longitude: selectedTruck.lng + 0.04 },
-            ]}
-            strokeColor="#22C55E"
-            strokeWidth={3}
+            coordinates={liveSelectedTruck.originalRoute}
+            strokeColor="#EF4444"
+            strokeWidth={2.5}
+            lineDashPattern={[8, 6]}
           />
         )}
       </MapView>
@@ -157,8 +139,14 @@ export function MapScreen() {
       {/* Map Header Overlay */}
       <View style={styles.mapHeader}>
         <View style={styles.headerPill}>
-          <View style={styles.liveDot} />
-          <Text style={styles.headerText}>Live Fleet · {trucks.length} vehicles</Text>
+          <View style={[styles.liveDot, error && styles.liveDotError]} />
+          <Text style={styles.headerText}>
+            {error
+              ? '⚠ Fleet unreachable — showing last known data'
+              : loading && trucks.length === 0
+                ? 'Loading fleet…'
+                : `Live Fleet · ${trucks.length} vehicles`}
+          </Text>
         </View>
       </View>
 
@@ -169,77 +157,85 @@ export function MapScreen() {
           contentContainerStyle={styles.sheetContent}
           showsVerticalScrollIndicator={false}
         >
-          {selectedTruck ? (
+          {liveSelectedTruck ? (
             /* Truck Info Card */
             <View style={styles.truckCard}>
               {/* Card Header */}
               <View style={styles.truckCardHeader}>
                 <View style={styles.truckCardLeft}>
-                  <Text style={styles.truckCardIcon}>{selectedTruck.cargoIcon}</Text>
+                  <Text style={styles.truckCardIcon}>{liveSelectedTruck.cargoIcon}</Text>
                   <View>
-                    <Text style={styles.truckCardId}>{selectedTruck.id}</Text>
-                    <Text style={styles.truckCardDriver}>{selectedTruck.driverName}</Text>
+                    <Text style={styles.truckCardId}>{liveSelectedTruck.id}</Text>
+                    <Text style={styles.truckCardDriver}>{liveSelectedTruck.organization || 'Unassigned organization'}</Text>
                   </View>
                 </View>
                 <View
                   style={[
                     styles.statusBadge,
-                    { backgroundColor: `${statusColor(selectedTruck.status)}18` },
+                    { backgroundColor: `${statusColor(liveSelectedTruck.status)}18` },
                   ]}
                 >
                   <Text
                     style={[
                       styles.statusText,
-                      { color: statusColor(selectedTruck.status) },
+                      { color: statusColor(liveSelectedTruck.status) },
                     ]}
                   >
-                    {selectedTruck.status.replace('_', ' ')}
+                    {liveSelectedTruck.status.replace('_', ' ')}
                   </Text>
                 </View>
               </View>
 
-              {/* Info Grid */}
+              {/* Info Grid — Plate No, Commodity, Status, ETA, Delay per issue #68 */}
               <View style={styles.infoGrid}>
                 <View style={styles.infoCell}>
-                  <Text style={styles.infoCellLabel}>Cargo</Text>
-                  <Text style={styles.infoCellValue}>{selectedTruck.cargo}</Text>
+                  <Text style={styles.infoCellLabel}>Plate No.</Text>
+                  <Text style={styles.infoCellValue}>{liveSelectedTruck.id}</Text>
+                </View>
+                <View style={styles.infoCell}>
+                  <Text style={styles.infoCellLabel}>Commodity</Text>
+                  <Text style={styles.infoCellValue}>{liveSelectedTruck.cargo}</Text>
                 </View>
                 <View style={styles.infoCell}>
                   <Text style={styles.infoCellLabel}>ETA</Text>
-                  <Text style={styles.infoCellValue}>{selectedTruck.eta}</Text>
+                  <Text style={styles.infoCellValue}>{liveSelectedTruck.eta}</Text>
                 </View>
                 <View style={styles.infoCell}>
-                  <Text style={styles.infoCellLabel}>Delay Risk</Text>
+                  <Text style={styles.infoCellLabel}>Delay</Text>
                   <Text
                     style={[
                       styles.infoCellValue,
-                      { color: riskColor(selectedTruck.delayRisk) },
+                      liveSelectedTruck.delayMinutes != null && {
+                        color: delayColor(liveSelectedTruck.delayMinutes),
+                      },
                     ]}
                   >
-                    {selectedTruck.delayRisk}%
+                    {liveSelectedTruck.delayMinutes == null
+                      ? '—'
+                      : `${liveSelectedTruck.delayMinutes > 0 ? '+' : ''}${liveSelectedTruck.delayMinutes}m`}
                   </Text>
                 </View>
-                <View style={styles.infoCell}>
+                <View style={[styles.infoCell, styles.infoCellWide]}>
                   <Text style={styles.infoCellLabel}>Route</Text>
                   <Text style={[styles.infoCellValue, styles.infoCellValueSmall]} numberOfLines={2}>
-                    {selectedTruck.route}
+                    {liveSelectedTruck.route}
                   </Text>
                 </View>
               </View>
 
               {/* Accept Reroute CTA */}
-              {selectedTruck.delayRisk >= 40 && (
+              {liveSelectedTruck.rerouted && (
                 <TouchableOpacity
                   style={[
                     styles.rerouteBtn,
-                    rerouteAccepted[selectedTruck.id] && styles.rerouteBtnAccepted,
+                    rerouteAccepted[liveSelectedTruck.id] && styles.rerouteBtnAccepted,
                   ]}
-                  onPress={() => handleAcceptReroute(selectedTruck.id)}
-                  disabled={!!rerouteAccepted[selectedTruck.id]}
+                  onPress={() => handleAcceptReroute(liveSelectedTruck.id)}
+                  disabled={!!rerouteAccepted[liveSelectedTruck.id]}
                   activeOpacity={0.8}
                 >
                   <Text style={styles.rerouteBtnText}>
-                    {rerouteAccepted[selectedTruck.id]
+                    {rerouteAccepted[liveSelectedTruck.id]
                       ? '✓ Reroute Accepted'
                       : '🔄 Accept AI Reroute'}
                   </Text>
@@ -262,8 +258,11 @@ export function MapScreen() {
                     color: '#FF5B22',
                   },
                   {
+                    // Real trip statuses are IN_TRANSIT / REROUTED / PENDING /
+                    // COMPLETED — there is no DELAYED status to filter on, so
+                    // this now reads real positive delay minutes instead.
                     label: 'Delayed',
-                    value: trucks.filter(t => t.status === 'DELAYED').length,
+                    value: trucks.filter(t => (t.delayMinutes ?? 0) > 0).length,
                     color: '#EF4444',
                   },
                 ].map((item) => (
@@ -312,6 +311,9 @@ const styles = StyleSheet.create({
     height: 7,
     borderRadius: 4,
     backgroundColor: '#22C55E',
+  },
+  liveDotError: {
+    backgroundColor: '#EF4444',
   },
   headerText: {
     fontSize: 12,
@@ -374,6 +376,9 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 14,
     gap: 4,
+  },
+  infoCellWide: {
+    width: '100%',
   },
   infoCellLabel: {
     fontSize: 10,

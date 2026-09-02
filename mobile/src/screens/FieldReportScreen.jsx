@@ -20,7 +20,8 @@ import {
 import { NetworkBadge } from '../components/NetworkBadge';
 import { IncidentForm } from '../components/IncidentForm';
 import { PhotoCapture } from '../components/PhotoCapture';
-import { enqueue, syncQueue, getQueue, uploadImageToFirebaseStorage, saveToFirestore, getCachedMapState } from '../services/syncQueue';
+import { enqueue, syncQueue, getQueue, getCachedMapState } from '../services/syncQueue';
+import { submitIncidentToBackend } from '../services/incidentApi';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
 import NetInfo from '@react-native-community/netinfo';
@@ -148,14 +149,13 @@ export function FieldReportScreen() {
 
     if (isOnline) {
       try {
-        // Two-tier online flow: upload image → save to Firestore
-        let imageUrl = null;
-        if (report.photoUri) {
-          imageUrl = await uploadImageToFirebaseStorage(report.photoUri);
-        }
-        await saveToFirestore({ ...report, verification_image_url: imageUrl });
+        // Submits to the real backend — POST /api/v1/incident, the same
+        // endpoint the web dashboard and the map both read from — rather
+        // than the Firebase mocks this replaced (uploadImageToFirebaseStorage
+        // / saveToFirestore never actually left the device).
+        await submitIncidentToBackend(report);
         setSubmitted(true);
-        snackbarMessage.current = '✅ Report submitted to Firebase!';
+        snackbarMessage.current = '✅ Report submitted — live on the dashboard!';
         showSnackbar('#22C55E');
         setTimeout(resetForm, 2500);
       } catch (err) {
