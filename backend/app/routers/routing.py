@@ -383,6 +383,30 @@ async def get_fleet_status(db: AsyncSession = Depends(get_db)):
         priority = trip.priority_level.value if trip.priority_level else "STANDARD"
         status = trip.status.value if trip.status else "IN_TRANSIT"
 
+        # Extract origin / destination coordinates from PostGIS points.
+        # These are used by the frontend to call OSRM for real road-snapped
+        # geometry, since stored route geometries may be straight-line placeholders.
+        origin_lat = origin_lng = dest_lat = dest_lng = None
+        if trip.origin_coords is not None:
+            origin_geojson_str = (await db.execute(
+                select(ST_AsGeoJSON(trip.origin_coords))
+            )).scalar()
+            if origin_geojson_str:
+                origin_geom = json.loads(origin_geojson_str)
+                coords = origin_geom.get("coordinates", [])
+                if len(coords) >= 2:
+                    origin_lng, origin_lat = coords[0], coords[1]
+
+        if trip.dest_coords is not None:
+            dest_geojson_str = (await db.execute(
+                select(ST_AsGeoJSON(trip.dest_coords))
+            )).scalar()
+            if dest_geojson_str:
+                dest_geom = json.loads(dest_geojson_str)
+                coords = dest_geom.get("coordinates", [])
+                if len(coords) >= 2:
+                    dest_lng, dest_lat = coords[0], coords[1]
+
         trip_responses.append(FleetTripResponse(
             trip_id=trip.trip_id,
             vehicle_id=trip.vehicle_id,
@@ -391,6 +415,10 @@ async def get_fleet_status(db: AsyncSession = Depends(get_db)):
             organization=trip.vehicle.organization if trip.vehicle else None,
             origin_name=trip.origin_name,
             dest_name=trip.dest_name,
+            origin_lat=origin_lat,
+            origin_lng=origin_lng,
+            dest_lat=dest_lat,
+            dest_lng=dest_lng,
             commodity_type=commodity,
             priority_level=priority,
             status=status,

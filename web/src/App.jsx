@@ -13,6 +13,7 @@ import { Header } from './components/Header';
 import { MapCanvas } from './components/MapCanvas';
 import { IncidentPanel } from './components/IncidentPanel';
 import { HazardMapOverlay } from './components/HazardMapOverlay';
+import { HazardRouteColorizer } from './components/HazardRouteColorizer';
 import { AlertBanner } from './components/AlertBanner';
 import { FleetRouteViewer } from './components/FleetRouteViewer';
 import { FleetSideDrawer } from './components/FleetSideDrawer';
@@ -23,6 +24,7 @@ import { useMapState } from './hooks/useMapState';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useHazardMap } from './hooks/useHazardMap';
 import { useFleetStatus } from './hooks/useFleetStatus';
+import { useOSRMRoutes } from './hooks/useOSRMRoutes';
 
 function App() {
   const { vehicles, setVehicles, incidents, setIncidents, loading, error } = useMapState();
@@ -36,12 +38,17 @@ function App() {
 
   // Stage 3: Fleet status management
   const {
-    fleetData,
+    fleetData: rawFleetData,
     loading: fleetLoading,
     refetch: refetchFleet,
     handleRerouteAlert,
     triggerReroute,
   } = useFleetStatus({ enabled: true });
+
+  // Issue #63: Replace straight-line displacement routes with real OSRM
+  // road-snapped geometry. This hook transparently enriches rawFleetData
+  // — all downstream components just use fleetData and get real roads.
+  const fleetData = useOSRMRoutes(rawFleetData);
 
   // Handle incoming WebSocket messages
   const handleWsMessage = useCallback((message) => {
@@ -196,10 +203,18 @@ function App() {
               fleetData={fleetData}
             />
 
-            {/* Stage 3: Route overlay on map */}
+            {/* Stage 3: Blocked-route dashed overlay on map */}
             <FleetRouteViewer
               map={mapInstance}
               fleetData={fleetData}
+              selectedTripId={selectedTripId}
+            />
+
+            {/* Issue #63: Hazard-colored segmented active routes */}
+            <HazardRouteColorizer
+              map={mapInstance}
+              fleetData={fleetData}
+              hazardData={hazardData}
               selectedTripId={selectedTripId}
             />
 

@@ -190,6 +190,11 @@ class FleetTripResponse(BaseModel):
     organization: str | None
     origin_name: str
     dest_name: str
+    # Explicit coordinates for OSRM-based frontend routing
+    origin_lat: float | None = None
+    origin_lng: float | None = None
+    dest_lat: float | None = None
+    dest_lng: float | None = None
     commodity_type: str
     priority_level: str
     status: str

@@ -188,17 +188,18 @@ export function HazardMapOverlay({ map, hazardData, enabled }) {
       map.setPaintProperty(HIGHLIGHT_LAYER_ID, 'fill-opacity', 0);
     };
 
-    // Click popup
+    // Click popup — shows hazard details and zooms to street level so the
+    // affected road segments inside the hexagon become visible.
     const handleClick = (e) => {
       if (!e.features?.length) return;
-      const props = e.features[0].properties;
+      const props  = e.features[0].properties;
       const coords = e.lngLat;
 
       // Close existing popup
       if (popupRef.current) popupRef.current.remove();
 
-      const riskColor = RISK_COLORS[props.risk_level] || '#888';
-      const blockagePercent = ((props.predicted_blockage_probability || 0) * 100).toFixed(1);
+      const riskColor        = RISK_COLORS[props.risk_level] || '#888';
+      const blockagePercent  = ((props.predicted_blockage_probability || 0) * 100).toFixed(1);
       const compositePercent = ((props.composite_score || 0) * 100).toFixed(1);
 
       const html = `
@@ -232,9 +233,12 @@ export function HazardMapOverlay({ map, hazardData, enabled }) {
           </div>
           <div class="hazard-popup-details">
             ${props.avg_slope_degrees ? `<span>Slope: ${Number(props.avg_slope_degrees).toFixed(1)}°</span>` : ''}
-            ${props.elevation_meters ? `<span>Elev: ${Number(props.elevation_meters).toFixed(0)}m</span>` : ''}
-            ${props.rainfall_1h_mm ? `<span>Rain/1h: ${Number(props.rainfall_1h_mm).toFixed(1)}mm</span>` : ''}
-            ${props.rainfall_24h_mm ? `<span>Rain/24h: ${Number(props.rainfall_24h_mm).toFixed(1)}mm</span>` : ''}
+            ${props.elevation_meters  ? `<span>Elev: ${Number(props.elevation_meters).toFixed(0)}m</span>` : ''}
+            ${props.rainfall_1h_mm   ? `<span>Rain/1h: ${Number(props.rainfall_1h_mm).toFixed(1)}mm</span>` : ''}
+            ${props.rainfall_24h_mm  ? `<span>Rain/24h: ${Number(props.rainfall_24h_mm).toFixed(1)}mm</span>` : ''}
+          </div>
+          <div class="hazard-popup-action">
+            <span style="font-size:10px;color:#9ca3af">🔍 Zooming to street level to show affected road…</span>
           </div>
         </div>
       `;
@@ -247,6 +251,17 @@ export function HazardMapOverlay({ map, hazardData, enabled }) {
         .setLngLat(coords)
         .setHTML(html)
         .addTo(map);
+
+      // Zoom into street level (zoom 13) so the roads inside the hexagon
+      // are clearly visible — this is exactly what Issue #63 requested.
+      const isCritical = props.risk_level === 'CRITICAL' || props.risk_level === 'HIGH';
+      map.easeTo({
+        center:   [coords.lng, coords.lat],
+        zoom:     isCritical ? 13.5 : 12.5,
+        pitch:    0,
+        bearing:  0,
+        duration: 1000,
+      });
     };
 
     map.on('mousemove', FILL_LAYER_ID, handleMouseMove);

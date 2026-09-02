@@ -1,36 +1,47 @@
 /**
  * AnalyticsDashboard — Centralized Operations Intelligence (/analytics)
  *
- * Ultra-modern dark monochromatic theme with a single vibrant-orange accent.
- * Layout (matches logistic_dashboard.jpg reference):
- *   ┌──────┬──────────────────────────────────────────────────────────┐
- *   │ rail │ topbar: title · search (pill) · Generate Report (pill)   │
- *   │ icon ├──────────────┬──────────────────────┬────────────────────┤
- *   │ nav  │ KPI stack    │ Delay Prediction     │ Reroute Audit      │
- *   │      │ (top = solid │ Matrix               │ Timeline (24h)     │
- *   │      │  orange)     │ District Spike Chart │                    │
- *   └──────┴──────────────┴──────────────────────┴────────────────────┘
+ * Professional dark theme with orange accent. No internal nav rail — navigation
+ * is handled by the global Header.jsx tab switcher.
  *
- * Data comes from the four /api/v1/dashboard/* endpoints via useAnalytics.
- * The district spike series is synthesised once on mount (no time-series
- * endpoint exists yet) using a seeded RNG so it stays stable across refreshes.
+ * Layout:
+ *  ┌──────────────────────────────────────────────────────────────────────────┐
+ *  │  Topbar: title · search · updated-at · refresh · Generate Report        │
+ *  ├───────────┬──────────────────────────────────────────┬───────────────────┤
+ *  │  KPI Stack│  AI Delay Prediction Matrix               │  Reroute Audit    │
+ *  │           │                                           │  Timeline (24h)   │
+ *  │  Fleet    ├──────────────────────────────────────────┤                   │
+ *  │  Summary  │  District-Wise Delay Spikes               │                   │
+ *  ├───────────┴──────────────────────────────────────────┴───────────────────┤
+ *  │  Origin Consignment Table (full-width)                                   │
+ *  ├──────────────────────────────────────────────────────────────────────────┤
+ *  │  Alert Log Strip                                                         │
+ *  └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Data: /api/v1/dashboard/* endpoints via useAnalytics (30s polling).
+ * Spike chart uses a seeded synthesised series — no time-series endpoint exists.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAnalytics } from '../hooks/useAnalytics';
 
 export function AnalyticsDashboard() {
   const {
     consignmentState,
     delayPrediction,
+    fleetSummary,
     rerouteAudit,
+    alertLog,
     loading,
     error,
     refetch,
   } = useAnalytics({ enabled: true, refreshInterval: 30000 });
 
   const [query, setQuery] = useState('');
+
+  // Build spike series once on mount — seeded RNG so it stays stable.
   const spike = useMemo(() => buildSpikeSeries(), []);
 
+  // ── Loading / error states ────────────────────────────────────────────────
   if (loading && !consignmentState) {
     return (
       <div className="ops-dash ops-dash--center" id="analytics-dashboard">
@@ -52,126 +63,182 @@ export function AnalyticsDashboard() {
     );
   }
 
+  // ── Derived / filtered data ───────────────────────────────────────────────
   const q = query.trim().toLowerCase();
-  const predictions = (delayPrediction?.predictions || []).filter((p) =>
-    !q ||
-    `${p.vehicle_name} ${p.origin} ${p.destination} ${p.commodity_type}`
-      .toLowerCase()
-      .includes(q)
+
+  const predictions = (delayPrediction?.predictions || []).filter(
+    (p) =>
+      !q ||
+      `${p.vehicle_name} ${p.origin} ${p.destination} ${p.commodity_type}`
+        .toLowerCase()
+        .includes(q),
   );
-  const events = (rerouteAudit?.events || []).filter((e) =>
-    !q ||
-    `${e.vehicle_name} ${e.origin} ${e.destination} ${e.trigger_reason}`
-      .toLowerCase()
-      .includes(q)
+
+  const events = (rerouteAudit?.events || []).filter(
+    (e) =>
+      !q ||
+      `${e.vehicle_name} ${e.origin} ${e.destination} ${e.trigger_reason}`
+        .toLowerCase()
+        .includes(q),
+  );
+
+  const alerts = (alertLog?.alerts || []).filter(
+    (a) =>
+      !q ||
+      `${a.vehicle_name || ''} ${a.message || ''} ${a.tier || ''}`
+        .toLowerCase()
+        .includes(q),
+  );
+
+  const origins = (consignmentState?.origins || []).filter(
+    (o) => !q || o.origin.toLowerCase().includes(q),
   );
 
   const updatedAt = consignmentState?.generated_at
     ? new Date(consignmentState.generated_at).toLocaleTimeString()
     : null;
 
+  // ── Export helper ─────────────────────────────────────────────────────────
+  const handleGenerateReport = () => {
+    window.print();
+  };
+
   return (
     <div className="ops-dash" id="analytics-dashboard">
-      {/* ── Left icon navigation ribbon ─────────────────────────────── */}
-      <nav className="ops-rail" aria-label="Operations sections">
-        <div className="ops-rail-logo">N</div>
-        <div className="ops-rail-nav">
-          <RailBtn n="map" label="Live Map" />
-          <RailBtn n="activity" label="Analytics" active />
-          <RailBtn n="truck" label="Fleet" />
-          <RailBtn n="route" label="Routes" />
-          <RailBtn n="alert" label="Alerts" />
-          <RailBtn n="file" label="Reports" />
+      {/* ── Topbar ───────────────────────────────────────────────────────── */}
+      <header className="ops-topbar">
+        <div className="ops-topbar-title">
+          <h1>Operations Analytics</h1>
+          <p>Multi-district intelligence · NER supply chain</p>
         </div>
-        <RailBtn n="settings" label="Settings" />
-      </nav>
 
-      {/* ── Main column ─────────────────────────────────────────────── */}
-      <div className="ops-main">
-        <header className="ops-topbar">
-          <div className="ops-topbar-title">
-            <h1>Operations Analytics</h1>
-            <p>Multi-district intelligence · NER supply chain</p>
-          </div>
-
-          <label className="ops-search">
-            <Icon n="search" />
-            <input
-              type="text"
-              placeholder="Search vehicles, routes, districts…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-          </label>
-
-          <div className="ops-topbar-actions">
-            {updatedAt && <span className="ops-updated">Updated {updatedAt}</span>}
+        <label className="ops-search" htmlFor="analytics-search">
+          <Icon n="search" />
+          <input
+            id="analytics-search"
+            type="text"
+            placeholder="Search vehicles, routes, districts…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          {query && (
             <button
-              className="ops-icon-btn"
-              onClick={refetch}
-              title="Refresh"
-              aria-label="Refresh analytics"
+              className="ops-search-clear"
+              onClick={() => setQuery('')}
+              aria-label="Clear search"
             >
-              <Icon n="refresh" />
+              <Icon n="x" />
             </button>
-            <button className="ops-report-btn" onClick={() => window.print()}>
-              <Icon n="plus" /> Generate Report
-            </button>
-          </div>
-        </header>
+          )}
+        </label>
 
-        <div className="ops-grid">
-          {/* ── Column 1 — KPI stack ──────────────────────────────── */}
+        <div className="ops-topbar-actions">
+          {updatedAt && (
+            <span className="ops-updated">
+              <Icon n="clock" />
+              {updatedAt}
+            </span>
+          )}
+          <button
+            className="ops-icon-btn"
+            onClick={refetch}
+            title="Refresh"
+            aria-label="Refresh analytics"
+          >
+            <Icon n="refresh" />
+          </button>
+          <button className="ops-report-btn" onClick={handleGenerateReport} id="btn-generate-report">
+            <Icon n="download" /> Generate Report
+          </button>
+        </div>
+      </header>
+
+      {/* ── Scrollable body ──────────────────────────────────────────────── */}
+      <div className="ops-body">
+        {/* ── Row 1: KPI + Matrix + Reroute Audit ─────────────────────── */}
+        <div className="ops-grid ops-grid--main">
+          {/* Column 1 — KPI stack + Fleet summary */}
           <div className="ops-col ops-col--kpi">
-            <KpiCard
-              primary
-              icon="truck"
-              value={consignmentState?.total_active_consignments ?? 0}
-              label="Active Consignments"
-              sub="On the way"
-            />
-            <KpiCard
-              icon="activity"
-              value={consignmentState?.total_running_fleet ?? 0}
-              label="Running Fleet"
-              sub="Vehicles in motion"
-            />
-            <KpiCard
-              icon="alert"
-              value={delayPrediction?.summary?.critical_risk ?? 0}
-              label="Critical Risk Trips"
-              sub="High delay probability"
-              dot
-            />
-            <KpiCard
-              icon="route"
-              value={rerouteAudit?.summary?.total_reroutes ?? 0}
-              label="Reroutes · 24h"
-              sub={`${rerouteAudit?.summary?.total_delay_minutes ?? 0}m added`}
-            />
+            <div className="ops-kpi-stack">
+              <KpiCard
+                primary
+                icon="package"
+                value={consignmentState?.total_active_consignments ?? 0}
+                label="Active Consignments"
+                sub="On the way"
+                id="kpi-consignments"
+              />
+              <KpiCard
+                icon="truck"
+                value={consignmentState?.total_running_fleet ?? 0}
+                label="Running Fleet"
+                sub="Vehicles in motion"
+                id="kpi-fleet"
+              />
+              <KpiCard
+                icon="alert-triangle"
+                value={delayPrediction?.summary?.critical_risk ?? 0}
+                label="Critical Risk Trips"
+                sub="High delay probability"
+                accent="red"
+                id="kpi-critical"
+              />
+              <KpiCard
+                icon="route"
+                value={rerouteAudit?.summary?.total_reroutes ?? 0}
+                label="Reroutes · 24h"
+                sub={`${rerouteAudit?.summary?.total_delay_minutes ?? 0}m added`}
+                accent="amber"
+                id="kpi-reroutes"
+              />
+            </div>
+
+            {/* Fleet Summary Panel */}
+            <FleetSummaryPanel fleetSummary={fleetSummary} />
           </div>
 
-          {/* ── Column 2 — Matrix + Spike chart ───────────────────── */}
+          {/* Column 2 — Delay matrix + Spike chart */}
           <div className="ops-col ops-col--center">
             <section className="ops-panel" id="panel-delay-prediction">
               <div className="ops-panel-head">
-                <h2>AI Delay Prediction Matrix</h2>
-                <span className="ops-tag">ML-powered</span>
+                <div className="ops-panel-head-left">
+                  <span className="ops-panel-accent" />
+                  <h2>AI Delay Prediction Matrix</h2>
+                </div>
+                <div className="ops-panel-head-right">
+                  <span className="ops-tag ops-tag--ml">
+                    <Icon n="cpu" />
+                    ML-Powered
+                  </span>
+                  {delayPrediction?.summary && (
+                    <span className="ops-tag ops-tag--neutral">
+                      {delayPrediction.summary.total_trips} trips
+                    </span>
+                  )}
+                </div>
               </div>
 
               {predictions.length > 0 ? (
-                <div className="matrix">
-                  <div className="matrix-row matrix-row--head">
-                    <span>Vehicle</span>
-                    <span>Route</span>
-                    <span>Commodity</span>
-                    <span className="matrix-prob-col">Delay Prob.</span>
+                <div className="matrix" role="table" aria-label="Delay prediction matrix">
+                  <div className="matrix-row matrix-row--head" role="row">
+                    <span role="columnheader">Vehicle</span>
+                    <span role="columnheader">Route</span>
+                    <span role="columnheader">Commodity</span>
+                    <span role="columnheader">Status</span>
+                    <span className="matrix-prob-col" role="columnheader">Delay Prob.</span>
                   </div>
                   {predictions.map((p, i) => {
                     const pct = Math.round((p.delay_probability ?? 0) * 100);
-                    const critical = /CRITICAL|HIGH/.test(p.risk_classification || '');
+                    const isCritical = /CRITICAL/.test(p.risk_classification || '');
+                    const isHigh = /HIGH/.test(p.risk_classification || '');
+                    const riskClass = isCritical ? 'is-critical' : isHigh ? 'is-high' : 'is-moderate';
                     return (
-                      <div className="matrix-row" key={i}>
+                      <div
+                        className={`matrix-row ${isCritical ? 'matrix-row--critical' : ''}`}
+                        key={p.trip_id || i}
+                        role="row"
+                        style={{ animationDelay: `${i * 40}ms` }}
+                      >
                         <span className="m-vehicle">{p.vehicle_name}</span>
                         <span className="m-route" title={`${p.origin} → ${p.destination}`}>
                           {p.origin} <span className="m-arrow">→</span> {p.destination}
@@ -180,47 +247,83 @@ export function AnalyticsDashboard() {
                           <Icon n={commodityIcon(p.commodity_type)} />
                           {labelCase(p.commodity_type)}
                         </span>
+                        <span className="m-status">
+                          <StatusPill status={p.status} />
+                        </span>
                         <span className="m-prob">
                           <span className="prob-bar">
                             <span
-                              className={`prob-fill ${critical ? 'is-critical' : 'is-moderate'}`}
+                              className={`prob-fill ${riskClass}`}
                               style={{ width: `${pct}%` }}
                             />
                           </span>
-                          <span className="prob-num">{pct}%</span>
+                          <span className={`prob-num prob-num--${riskClass}`}>{pct}%</span>
                         </span>
                       </div>
                     );
                   })}
                 </div>
               ) : (
-                <Empty text={q ? 'No matches for this search' : 'No delay predictions'} />
+                <EmptyState text={q ? 'No matches for this search' : 'No delay predictions'} />
+              )}
+
+              {/* Risk summary bar */}
+              {delayPrediction?.summary && predictions.length > 0 && (
+                <div className="matrix-summary">
+                  <SummaryPill
+                    color="var(--red)"
+                    label="Critical"
+                    value={delayPrediction.summary.critical_risk}
+                  />
+                  <SummaryPill
+                    color="var(--amber)"
+                    label="High Risk"
+                    value={delayPrediction.summary.high_risk}
+                  />
+                  <SummaryPill
+                    color="var(--text-muted)"
+                    label="Avg Prob."
+                    value={`${Math.round((delayPrediction.summary.avg_delay_probability || 0) * 100)}%`}
+                  />
+                </div>
               )}
             </section>
 
             <section className="ops-panel" id="panel-district-spikes">
               <div className="ops-panel-head">
-                <h2>District-Wise Delay Spikes</h2>
-                <span className="ops-tag">last 24h</span>
+                <div className="ops-panel-head-left">
+                  <span className="ops-panel-accent" />
+                  <h2>District-Wise Delay Spikes</h2>
+                </div>
+                <div className="ops-panel-head-right">
+                  <span className="ops-tag ops-tag--neutral">Last 24h</span>
+                </div>
               </div>
               <SpikeAreaChart labels={spike.labels} series={spike.series} />
             </section>
           </div>
 
-          {/* ── Column 3 — Reroute audit timeline ─────────────────── */}
+          {/* Column 3 — Reroute audit timeline */}
           <div className="ops-col ops-col--right">
             <section className="ops-panel ops-panel--timeline" id="panel-reroute-audit">
               <div className="ops-panel-head">
-                <h2>Reroute Audit</h2>
-                <span className="ops-tag">
+                <div className="ops-panel-head-left">
+                  <span className="ops-panel-accent ops-panel-accent--amber" />
+                  <h2>Reroute Audit</h2>
+                </div>
+                <span className="ops-tag ops-tag--neutral">
                   {rerouteAudit?.summary?.total_reroutes ?? events.length} events
                 </span>
               </div>
 
               {events.length > 0 ? (
-                <ol className="timeline">
+                <ol className="timeline" aria-label="Reroute events timeline">
                   {events.map((evt, i) => (
-                    <li className="timeline-item" key={i}>
+                    <li
+                      className="timeline-item"
+                      key={evt.log_id || i}
+                      style={{ animationDelay: `${i * 60}ms` }}
+                    >
                       <span className="timeline-time">{shortTime(evt.created_at)}</span>
                       <span className="timeline-marker" />
                       <div className="timeline-body">
@@ -232,25 +335,27 @@ export function AnalyticsDashboard() {
                               {' '}·{' '}
                               <span
                                 className={
-                                  evt.delay_minutes > 0 ? 'timeline-delay' : 'timeline-delay is-gain'
+                                  evt.delay_minutes > 0
+                                    ? 'timeline-delay'
+                                    : 'timeline-delay is-gain'
                                 }
                               >
                                 {evt.delay_minutes > 0 ? '+' : ''}
-                                {evt.delay_minutes}m delay
+                                {evt.delay_minutes}m
                               </span>
                             </>
                           ) : null}
                         </p>
                         <p className="timeline-route">
-                          {evt.origin} <span className="m-arrow">→</span> {evt.destination}
                           <Icon n={commodityIcon(evt.commodity_type)} className="timeline-cargo" />
+                          {evt.origin} <span className="m-arrow">→</span> {evt.destination}
                         </p>
                       </div>
                     </li>
                   ))}
                 </ol>
               ) : (
-                <Empty text={q ? 'No matches for this search' : 'No reroutes in the last 24h'} />
+                <EmptyState text={q ? 'No matches' : 'No reroutes in the last 24h'} icon="route" />
               )}
 
               {rerouteAudit?.summary && events.length > 0 && (
@@ -266,6 +371,56 @@ export function AnalyticsDashboard() {
             </section>
           </div>
         </div>
+
+        {/* ── Row 2: Origin Table + Commodity Chart ───────────────────────── */}
+        <div className="ops-grid ops-grid--bottom">
+          {/* Origin consignment table */}
+          <section className="ops-panel ops-panel--wide" id="panel-origin-table">
+            <div className="ops-panel-head">
+              <div className="ops-panel-head-left">
+                <span className="ops-panel-accent ops-panel-accent--blue" />
+                <h2>Origin Consignment State</h2>
+              </div>
+              <span className="ops-tag ops-tag--neutral">{origins.length} origins</span>
+            </div>
+            <OriginTable origins={origins} />
+          </section>
+
+          {/* Commodity breakdown */}
+          <section className="ops-panel" id="panel-commodity-breakdown">
+            <div className="ops-panel-head">
+              <div className="ops-panel-head-left">
+                <span className="ops-panel-accent ops-panel-accent--green" />
+                <h2>Commodity Breakdown</h2>
+              </div>
+            </div>
+            <CommodityBreakdown
+              breakdown={consignmentState?.commodity_breakdown}
+              fleetSummary={fleetSummary}
+            />
+          </section>
+        </div>
+
+        {/* ── Row 3: Alert Log Strip ───────────────────────────────────────── */}
+        {alerts.length > 0 && (
+          <section className="ops-panel ops-panel--alert-log" id="panel-alert-log">
+            <div className="ops-panel-head">
+              <div className="ops-panel-head-left">
+                <span className="ops-panel-accent ops-panel-accent--red" />
+                <h2>Recent Alerts</h2>
+              </div>
+              <div className="ops-panel-head-right">
+                <span className="ops-tag ops-tag--neutral">{alertLog?.total_returned ?? 0} alerts</span>
+                {alertLog?.buffered_informational > 0 && (
+                  <span className="ops-tag ops-tag--neutral">
+                    +{alertLog.buffered_informational} buffered
+                  </span>
+                )}
+              </div>
+            </div>
+            <AlertLogStrip alerts={alerts} />
+          </section>
+        )}
       </div>
     </div>
   );
@@ -273,47 +428,272 @@ export function AnalyticsDashboard() {
 
 // ── Sub-components ───────────────────────────────────────────────────────────
 
-function RailBtn({ n, label, active }) {
-  return (
-    <button className={`ops-rail-btn ${active ? 'active' : ''}`} title={label} aria-label={label}>
-      <Icon n={n} />
-    </button>
-  );
-}
+function KpiCard({ primary, icon, value, label, sub, accent, id }) {
+  const accentMap = {
+    red: 'kpi-card--red',
+    amber: 'kpi-card--amber',
+    green: 'kpi-card--green',
+  };
+  const cls = primary
+    ? 'kpi-card kpi-card--primary'
+    : `kpi-card ${accent ? accentMap[accent] || '' : ''}`;
 
-function KpiCard({ primary, icon, value, label, sub, dot }) {
   return (
-    <div className={`kpi-card ${primary ? 'kpi-card--primary' : ''}`}>
-      <span className="kpi-icon">
-        <Icon n={icon} />
-      </span>
-      <span className="kpi-value">
-        {value}
-        {dot && <span className="kpi-dot" />}
-      </span>
+    <div className={cls} id={id}>
+      <div className="kpi-header">
+        <span className="kpi-icon">
+          <Icon n={icon} />
+        </span>
+      </div>
+      <AnimatedNumber value={value} className="kpi-value" />
       <span className="kpi-label">{label}</span>
       <span className="kpi-sub">{sub}</span>
     </div>
   );
 }
 
-function Empty({ text }) {
+/** Counts up to the target value on mount / value change. */
+function AnimatedNumber({ value, className }) {
+  const [display, setDisplay] = useState(0);
+  const rafRef = useRef(null);
+
+  useEffect(() => {
+    const start = 0;
+    const end = Number(value) || 0;
+    const duration = 600;
+    const startTime = performance.now();
+
+    const tick = (now) => {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // Ease out cubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplay(Math.round(start + eased * (end - start)));
+      if (progress < 1) rafRef.current = requestAnimationFrame(tick);
+    };
+
+    rafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [value]);
+
+  return <span className={className}>{display}</span>;
+}
+
+function StatusPill({ status }) {
+  const map = {
+    IN_TRANSIT: { label: 'In Transit', cls: 'status--transit' },
+    REROUTED: { label: 'Rerouted', cls: 'status--rerouted' },
+    PENDING: { label: 'Pending', cls: 'status--pending' },
+    COMPLETED: { label: 'Completed', cls: 'status--completed' },
+  };
+  const { label, cls } = map[status] || { label: status, cls: '' };
+  return <span className={`status-pill ${cls}`}>{label}</span>;
+}
+
+function SummaryPill({ color, label, value }) {
+  return (
+    <div className="summary-pill">
+      <span className="summary-pill-dot" style={{ background: color }} />
+      <span className="summary-pill-label">{label}</span>
+      <span className="summary-pill-value">{value}</span>
+    </div>
+  );
+}
+
+function FleetSummaryPanel({ fleetSummary }) {
+  if (!fleetSummary) {
+    return (
+      <section className="ops-panel" id="panel-fleet-summary">
+        <div className="ops-panel-head">
+          <div className="ops-panel-head-left">
+            <span className="ops-panel-accent ops-panel-accent--green" />
+            <h2>Fleet Summary</h2>
+          </div>
+        </div>
+        <EmptyState text="Loading fleet data…" icon="truck" />
+      </section>
+    );
+  }
+
+  const { totals, fleet_by_type, commodity_trips } = fleetSummary;
+
+  return (
+    <section className="ops-panel" id="panel-fleet-summary">
+      <div className="ops-panel-head">
+        <div className="ops-panel-head-left">
+          <span className="ops-panel-accent ops-panel-accent--green" />
+          <h2>Fleet Summary</h2>
+        </div>
+        <span className="ops-tag ops-tag--neutral">{totals?.total_vehicles ?? 0} vehicles</span>
+      </div>
+
+      <div className="fleet-totals">
+        <FleetStat label="Active" value={totals?.active ?? 0} color="var(--green)" />
+        <FleetStat label="Maintenance" value={totals?.maintenance ?? 0} color="var(--amber)" />
+        <FleetStat label="Inactive" value={totals?.inactive ?? 0} color="var(--text-muted)" />
+      </div>
+
+      {fleet_by_type && Object.keys(fleet_by_type).length > 0 && (
+        <div className="fleet-type-list">
+          {Object.entries(fleet_by_type).map(([type, stats]) => (
+            <div className="fleet-type-row" key={type}>
+              <span className="fleet-type-name">
+                <Icon n={vehicleTypeIcon(type)} />
+                {labelCase(type)}
+              </span>
+              <div className="fleet-type-bar-wrap">
+                <div
+                  className="fleet-type-bar-fill"
+                  style={{
+                    width: `${totals?.total_vehicles > 0 ? (stats.active / totals.total_vehicles) * 100 : 0}%`,
+                  }}
+                />
+              </div>
+              <span className="fleet-type-count">{stats.active}/{stats.total}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function FleetStat({ label, value, color }) {
+  return (
+    <div className="fleet-stat">
+      <span className="fleet-stat-dot" style={{ background: color }} />
+      <span className="fleet-stat-val">{value}</span>
+      <span className="fleet-stat-label">{label}</span>
+    </div>
+  );
+}
+
+function OriginTable({ origins }) {
+  if (!origins || origins.length === 0) {
+    return <EmptyState text="No origin data available" icon="map" />;
+  }
+
+  return (
+    <div className="origin-table" role="table" aria-label="Origin consignment state">
+      <div className="origin-row origin-row--head" role="row">
+        <span role="columnheader">Origin</span>
+        <span role="columnheader">Consignments</span>
+        <span role="columnheader">Fleet</span>
+        <span role="columnheader">In Transit</span>
+        <span role="columnheader">Rerouted</span>
+        <span role="columnheader">Pending</span>
+        <span role="columnheader">Status</span>
+      </div>
+      {origins.map((o, i) => {
+        const total = o.total_consignments || 1;
+        const inTransitPct = Math.round(((o.in_transit || 0) / total) * 100);
+        return (
+          <div className="origin-row" key={o.origin} role="row" style={{ animationDelay: `${i * 30}ms` }}>
+            <span className="origin-name">{o.origin}</span>
+            <span className="origin-num">{o.total_consignments}</span>
+            <span className="origin-num">{o.running_fleet}</span>
+            <span className="origin-num origin-num--transit">{o.in_transit || 0}</span>
+            <span className="origin-num origin-num--rerouted">{o.rerouted || 0}</span>
+            <span className="origin-num origin-num--pending">{o.pending || 0}</span>
+            <span className="origin-bar-cell">
+              <div className="origin-bar">
+                <div className="origin-bar-fill" style={{ width: `${inTransitPct}%` }} />
+              </div>
+              <span className="origin-bar-pct">{inTransitPct}%</span>
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function CommodityBreakdown({ breakdown, fleetSummary }) {
+  const commodityTrips = fleetSummary?.commodity_trips || breakdown || {};
+  const entries = Object.entries(commodityTrips);
+  const maxVal = Math.max(1, ...entries.map(([, v]) => v));
+
+  if (entries.length === 0) {
+    return <EmptyState text="No commodity data" icon="package" />;
+  }
+
+  const colorMap = {
+    MEDICINE: '#a855f7',
+    PHARMA: '#a855f7',
+    FOOD_GRAINS: '#22c55e',
+    FUEL: '#f59e0b',
+    GENERAL: '#3b82f6',
+  };
+
+  return (
+    <div className="commodity-list">
+      {entries.map(([type, count]) => {
+        const pct = Math.round((count / maxVal) * 100);
+        const color = colorMap[type] || '#6b7280';
+        return (
+          <div className="commodity-row" key={type}>
+            <span className="commodity-icon">
+              <Icon n={commodityIcon(type)} />
+            </span>
+            <span className="commodity-name">{labelCase(type)}</span>
+            <div className="commodity-bar-wrap">
+              <div className="commodity-bar-fill" style={{ width: `${pct}%`, background: color }} />
+            </div>
+            <span className="commodity-count">{count}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AlertLogStrip({ alerts }) {
+  const tierColor = {
+    CRITICAL: 'var(--red)',
+    HIGH: 'var(--orange)',
+    MEDIUM: 'var(--amber)',
+    LOW: 'var(--text-muted)',
+    INFORMATIONAL: 'var(--blue)',
+  };
+
+  return (
+    <div className="alert-log-list">
+      {alerts.slice(0, 20).map((a, i) => (
+        <div className="alert-log-item" key={a.alert_id || i} style={{ animationDelay: `${i * 25}ms` }}>
+          <span
+            className="alert-log-tier"
+            style={{ color: tierColor[a.tier] || 'var(--text-muted)', borderColor: tierColor[a.tier] }}
+          >
+            {a.tier || 'INFO'}
+          </span>
+          <span className="alert-log-vehicle">{a.vehicle_name || '—'}</span>
+          <span className="alert-log-msg">{a.message || a.trigger_reason || '—'}</span>
+          <span className="alert-log-time">{shortTime(a.created_at || a.dispatched_at)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EmptyState({ text, icon = 'activity' }) {
   return (
     <div className="ops-empty">
-      <Icon n="activity" />
+      <Icon n={icon} />
       <span>{text}</span>
     </div>
   );
 }
 
+// ── Spike Area Chart ─────────────────────────────────────────────────────────
+
 function SpikeAreaChart({ labels, series }) {
   const [hover, setHover] = useState(null);
-  const W = 660;
-  const H = 236;
-  const padL = 6;
-  const padR = 6;
-  const padT = 14;
-  const padB = 24;
+  const W = 680;
+  const H = 220;
+  const padL = 8;
+  const padR = 8;
+  const padT = 16;
+  const padB = 28;
   const innerW = W - padL - padR;
   const innerH = H - padT - padB;
   const n = labels.length;
@@ -328,6 +708,7 @@ function SpikeAreaChart({ labels, series }) {
     `M ${xAt(0)},${padT + innerH} ` +
     primary.data.map((v, i) => `L ${xAt(i)},${yAt(v)}`).join(' ') +
     ` L ${xAt(n - 1)},${padT + innerH} Z`;
+
   const gridYs = [0.25, 0.5, 0.75, 1].map((f) => padT + innerH - f * innerH);
 
   const onMove = (e) => {
@@ -345,20 +726,32 @@ function SpikeAreaChart({ labels, series }) {
         viewBox={`0 0 ${W} ${H}`}
         onMouseMove={onMove}
         onMouseLeave={() => setHover(null)}
+        role="img"
+        aria-label="District delay spike chart"
       >
         <defs>
           <linearGradient id="spikeFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#ff5b22" stopOpacity="0.34" />
-            <stop offset="100%" stopColor="#ff5b22" stopOpacity="0" />
+            <stop offset="0%" stopColor="#ff5b22" stopOpacity="0.38" />
+            <stop offset="100%" stopColor="#ff5b22" stopOpacity="0.02" />
           </linearGradient>
         </defs>
 
+        {/* Grid lines */}
         {gridYs.map((y, i) => (
           <line key={i} className="spike-grid" x1={padL} y1={y} x2={W - padR} y2={y} />
         ))}
 
+        {/* Y-axis labels */}
+        {gridYs.map((y, i) => (
+          <text key={`yl-${i}`} className="spike-ylabel" x={padL} y={y - 3}>
+            {Math.round(max * [0.25, 0.5, 0.75, 1][i])}m
+          </text>
+        ))}
+
+        {/* Gradient fill for primary */}
         <path d={area} fill="url(#spikeFill)" />
 
+        {/* Secondary series lines */}
         {series
           .filter((s) => !s.primary)
           .map((s) => (
@@ -368,29 +761,32 @@ function SpikeAreaChart({ labels, series }) {
               fill="none"
               stroke={s.color}
               strokeWidth="1.5"
-              strokeOpacity="0.75"
+              strokeOpacity="0.65"
               strokeLinecap="round"
               strokeLinejoin="round"
             />
           ))}
 
+        {/* Primary series line */}
         <polyline
           points={line(primary)}
           fill="none"
           stroke="#ff5b22"
-          strokeWidth="3"
+          strokeWidth="2.5"
           strokeLinecap="round"
           strokeLinejoin="round"
         />
 
+        {/* X-axis labels */}
         {labels.map((l, i) =>
           i % 2 === 0 ? (
-            <text key={i} className="spike-xlabel" x={xAt(i)} y={H - 7} textAnchor="middle">
+            <text key={i} className="spike-xlabel" x={xAt(i)} y={H - 8} textAnchor="middle">
               {l}
             </text>
-          ) : null
+          ) : null,
         )}
 
+        {/* Hover crosshair */}
         {hover != null && (
           <g>
             <line
@@ -405,16 +801,17 @@ function SpikeAreaChart({ labels, series }) {
                 key={s.key}
                 cx={xAt(hover)}
                 cy={yAt(s.data[hover])}
-                r="3.6"
+                r="4"
                 fill={s.color}
-                stroke="#1c1c1c"
-                strokeWidth="1.6"
+                stroke="#111"
+                strokeWidth="2"
               />
             ))}
           </g>
         )}
       </svg>
 
+      {/* Tooltip */}
       {hover != null && (
         <div className="spike-tip" style={{ left: `${tipLeft}%` }}>
           <div className="spike-tip-time">{labels[hover]}</div>
@@ -428,6 +825,7 @@ function SpikeAreaChart({ labels, series }) {
         </div>
       )}
 
+      {/* Legend */}
       <div className="spike-legend">
         {series.map((s) => (
           <span className="spike-legend-item" key={s.key}>
@@ -440,11 +838,19 @@ function SpikeAreaChart({ labels, series }) {
   );
 }
 
-// ── Inline icon set (monochrome, stroke-based) ──────────────────────────────
+// ── Inline Icon Set ──────────────────────────────────────────────────────────
 
 const ICON_PATHS = {
   search: <><circle cx="11" cy="11" r="7" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></>,
+  x: <><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></>,
   plus: <><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></>,
+  download: (
+    <>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </>
+  ),
   refresh: (
     <>
       <polyline points="23 4 23 10 17 10" />
@@ -475,10 +881,11 @@ const ICON_PATHS = {
       <line x1="12" y1="17" x2="12.01" y2="17" />
     </>
   ),
-  file: (
+  'alert-triangle': (
     <>
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-      <polyline points="14 2 14 8 20 8" />
+      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+      <line x1="12" y1="9" x2="12" y2="13" />
+      <line x1="12" y1="17" x2="12.01" y2="17" />
     </>
   ),
   route: (
@@ -488,10 +895,27 @@ const ICON_PATHS = {
       <circle cx="18" cy="5" r="3" />
     </>
   ),
-  settings: (
+  package: (
     <>
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 8 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H2a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 3.6 8a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H8a1.65 1.65 0 0 0 1-1.51V2a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V8a1.65 1.65 0 0 0 1.51 1H22a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+      <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+      <line x1="12" y1="22.08" x2="12" y2="12" />
+    </>
+  ),
+  cpu: (
+    <>
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <rect x="9" y="9" width="6" height="6" />
+      <line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" />
+      <line x1="9" y1="20" x2="9" y2="23" /><line x1="15" y1="20" x2="15" y2="23" />
+      <line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" />
+      <line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" />
+    </>
+  ),
+  clock: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
     </>
   ),
   medicine: (
@@ -524,6 +948,16 @@ const ICON_PATHS = {
       <line x1="12" y1="22.08" x2="12" y2="12" />
     </>
   ),
+  ambulance: (
+    <>
+      <rect x="1" y="3" width="15" height="13" />
+      <polygon points="16 8 20 8 23 11 23 16 16 16 16 8" />
+      <circle cx="5.5" cy="18.5" r="2.5" />
+      <circle cx="18.5" cy="18.5" r="2.5" />
+      <line x1="6" y1="8" x2="6" y2="12" />
+      <line x1="4" y1="10" x2="8" y2="10" />
+    </>
+  ),
 };
 
 function Icon({ n, className }) {
@@ -531,8 +965,8 @@ function Icon({ n, className }) {
     <svg
       className={className}
       viewBox="0 0 24 24"
-      width="18"
-      height="18"
+      width="16"
+      height="16"
       fill="none"
       stroke="currentColor"
       strokeWidth="1.75"
@@ -545,7 +979,7 @@ function Icon({ n, className }) {
   );
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function commodityIcon(type) {
   return (
@@ -557,6 +991,13 @@ function commodityIcon(type) {
       GENERAL: 'box',
     }[type] || 'box'
   );
+}
+
+function vehicleTypeIcon(type) {
+  const t = type?.toUpperCase() || '';
+  if (t.includes('AMBULANCE')) return 'ambulance';
+  if (t.includes('UTIL')) return 'box';
+  return 'truck';
 }
 
 function labelCase(str) {
@@ -602,8 +1043,8 @@ function buildSpikeSeries() {
     labels,
     series: [
       { key: 'Imphal Corridor', color: '#ff5b22', primary: true, data: mk(26, 9, 7, 44) },
-      { key: 'Silchar', color: '#ffffff', data: mk(17, 6, 8, 12) },
-      { key: 'Guwahati', color: '#9ca3af', data: mk(11, 5, 9, 6) },
+      { key: 'Silchar',         color: '#ffffff',  data: mk(17, 6, 8, 12) },
+      { key: 'Guwahati',        color: '#9ca3af',  data: mk(11, 5, 9, 6) },
     ],
   };
 }
