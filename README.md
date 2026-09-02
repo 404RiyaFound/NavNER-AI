@@ -149,11 +149,12 @@ python -m venv .venv
 # source .venv/bin/activate
 
 pip install -r requirements.txt
+alembic upgrade head
 uvicorn app.main:app --reload --port 8000
 ```
 
 The backend will:
-- Auto-create all database tables
+- Run database migrations via Alembic
 - Seed demo data (3 vehicles, 3 users, 3 incidents across NER)
 - Serve the API at `http://localhost:8000`
 - API docs at `http://localhost:8000/docs`
@@ -179,6 +180,16 @@ npx expo start
 Scan the QR code with **Expo Go** on your phone, or press `w` for web preview.
 
 > **Note:** The mobile app uses `react-native-maps 1.20.1` which is the version bundled with Expo SDK 54. Do not upgrade this package independently as it will break native map rendering in Expo Go.
+
+### 5. Govt Fleet Manager
+
+```bash
+cd fleet-manager
+npm install
+npm run dev
+```
+
+Opens the Government / Agency Fleet Manager dashboard at `http://localhost:5174` (or next available port).
 
 ---
 
