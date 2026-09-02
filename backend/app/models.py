@@ -59,6 +59,15 @@ class IncidentStatus(str, enum.Enum):
     resolved = "resolved"
 
 
+class IncidentSource(str, enum.Enum):
+    """Where a report came from (issue #74). Distinguishes a normal app
+    submission from one that arrived over the satellite-SMS bridge with its
+    image still pending — the dashboard needs to render those differently."""
+
+    APP = "APP"
+    SATELLITE_SMS = "SATELLITE_SMS"
+
+
 class RiskLevel(str, enum.Enum):
     """Composite risk classification for Stage 2 hazard prediction."""
     LOW = "LOW"
@@ -179,6 +188,17 @@ class Incident(Base):
         Enum(IncidentStatus), nullable=False, default=IncidentStatus.open
     )
     reported_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    # ── Satellite-SMS bridge fields (issue #74) ────────────────────────────
+    # All nullable: incidents reported through the normal app flow have none
+    # of these, and existing rows predate the column.
+    severity = Column(Enum(RiskLevel), nullable=True)
+    source = Column(Enum(IncidentSource), nullable=True, default=IncidentSource.APP)
+    # Short human-readable id (e.g. "INC102") carried end-to-end from the SMS
+    # payload — a dispatcher reads this off the dashboard and a field officer
+    # reads it off their phone; the UUID primary key is not something either
+    # of them can usefully compare by eye.
+    readable_id = Column(String(20), nullable=True, unique=True, index=True)
     created_at = Column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc)
     )

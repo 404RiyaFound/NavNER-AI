@@ -1520,6 +1520,7 @@ input[type="range"]::-webkit-slider-thumb {
   font-size: 13px;
 }
 .ops-empty svg { width: 22px; height: 22px; opacity: 0.4; }
+.ops-empty.ops-empty--chart { height: 220px; text-align: center; padding: 0 40px; }
 
 /* ── Delay Prediction Matrix ─────────────────────────────────────── */
 .matrix { display: flex; flex-direction: column; }
@@ -2643,4 +2644,4 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* Positron style uses white background — no override needed, it matches
    the dark overlay controls because the map area is its own canvas. */
-
+

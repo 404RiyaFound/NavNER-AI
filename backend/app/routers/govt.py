@@ -5,10 +5,14 @@ register vehicles here, and the NavNER command centre consumes the result. These
 endpoints are that boundary — §3.1 writes provisioning records, §3.3 serves them
 back, and the dashboard summary feeds the VAHAN-style KPI blocks.
 
-Everything is read from the same `vehicles` / `vehicle_trips` tables the rest of
-the platform uses. There is no separate government datastore: a vehicle
-registered here is immediately routable by the AI engine, which is the whole
-point of the split.
+Provisioning writes (registration, scenario seeding) go to the Fleet Manager's
+own database (app.govt_models) — the government system of record, per issue
+#65 §3.3 ("the fleet-manager portal acts as the source of truth"). Each write
+is synced into NavNER's database (app.services.govt_sync) so the vehicle is
+immediately routable, but the fleet-manager database is what a dispatcher's
+registration is actually durable in. Read endpoints below query NavNER's
+database directly, because live position, trips and reroutes only ever exist
+there — the fleet-manager database holds no geometry or telemetry.
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.govt_database import get_govt_db
 from app.models import (
     RerouteLog,
     RiskLevel,
@@ -32,7 +37,9 @@ from app.models import (
     VehicleStatus,
     VehicleTrip,
 )
+from app.govt_models import FleetVehicle, GovtVehicleClass
 from app.services.govt_fleet_seed import seed_government_fleet
+from app.services.govt_sync import sync_vehicle_to_navner
 from app.schemas import (
     GovtActiveFleetResponse,
     GovtTransitLogResponse,
@@ -126,16 +133,19 @@ def _zone_matches(zone: str | None, district: str | None) -> bool:
 @router.post("/fleet", status_code=201, response_model=GovtFleetVehicle)
 async def register_fleet_vehicle(
     payload: GovtFleetRegisterRequest,
+    govt_db: AsyncSession = Depends(get_govt_db),
     db: AsyncSession = Depends(get_db),
 ) -> GovtFleetVehicle:
     """Register a vehicle from the provisioning form (§3.1).
 
-    Writes straight to `vehicles`, so the vehicle is immediately visible to the
-    NavNER routing engine with no sync step.
+    Writes the authoritative record to the Fleet Manager database, then syncs
+    it into NavNER's database so the vehicle is immediately routable. The
+    duplicate-plate check and the 409 it raises are against the fleet-manager
+    database — that is where "already registered" is actually decided.
     """
     existing = (
-        await db.execute(
-            select(Vehicle).where(Vehicle.license_plate == payload.license_plate)
+        await govt_db.execute(
+            select(FleetVehicle).where(FleetVehicle.license_plate == payload.license_plate)
         )
     ).scalar_one_or_none()
 
@@ -147,25 +157,30 @@ async def register_fleet_vehicle(
             detail=f"Vehicle {payload.license_plate} is already registered",
         )
 
-    vehicle = Vehicle(
-        name=payload.name or payload.license_plate,
+    fleet_vehicle = FleetVehicle(
         license_plate=payload.license_plate,
+        name=payload.name,
         organization=payload.organization,
-        vehicle_class=payload.vehicle_class,
+        vehicle_class=GovtVehicleClass(payload.vehicle_class.value),
         cargo_capacity_tons=payload.cargo_capacity_tons,
         depot_origin=payload.depot_origin,
         target_district=payload.target_district,
-        status=VehicleStatus.active,
     )
-    db.add(vehicle)
+    govt_db.add(fleet_vehicle)
+    await govt_db.flush()
+
+    vehicle = await sync_vehicle_to_navner(db, fleet_vehicle)
+    fleet_vehicle.synced_to_navner = True
+
+    await govt_db.commit()
     await db.commit()
-    await db.refresh(vehicle)
 
     logger.info(
-        "[Govt] Registered %s (%s) for %s",
-        vehicle.license_plate,
+        "[Govt] Registered %s (%s) for %s — synced to NavNER as %s",
+        fleet_vehicle.license_plate,
         payload.vehicle_class.value,
         payload.target_district,
+        vehicle.id,
     )
 
     return GovtFleetVehicle(
@@ -443,14 +458,18 @@ async def get_dashboard_summary(
 
 
 @router.post("/simulate/seed", status_code=201)
-async def seed_scenario_fleet(db: AsyncSession = Depends(get_db)) -> dict:
+async def seed_scenario_fleet(
+    db: AsyncSession = Depends(get_db),
+    govt_db: AsyncSession = Depends(get_govt_db),
+) -> dict:
     """Provision the 50-vehicle Assam scenario (§3.2).
 
     Exposed as an endpoint rather than a startup hook so a demo can be reset on
     demand without a restart. Idempotent on licence plate, so calling it twice
-    tops the fleet up instead of duplicating it.
+    tops the fleet up instead of duplicating it. Writes to both databases —
+    see seed_government_fleet.
     """
-    return await seed_government_fleet(db)
+    return await seed_government_fleet(db, govt_db)
 
 
 @router.get("/transit-log", response_model=GovtTransitLogResponse)

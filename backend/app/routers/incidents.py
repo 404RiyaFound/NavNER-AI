@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models import Incident, IncidentType
-from app.schemas import IncidentResponse
+from app.schemas import IncidentResponse, IncidentImageSyncResponse
 from app.websocket import manager
 
 router = APIRouter(prefix="/api/v1", tags=["incidents"])
@@ -116,3 +116,47 @@ async def create_incident(
         reported_by=reporter_id,
         created_at=now,
     )
+
+
+@router.patch("/incidents/{readable_id}/image", response_model=IncidentImageSyncResponse)
+async def sync_incident_image(
+    readable_id: str,
+    image: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Attach the deferred photo for a satellite-SMS incident (issue #74 §1).
+
+    The SMS bridge plots the hazard immediately with image_url set to the
+    "PENDING_NETWORK_SYNC" sentinel; the mobile app calls this once it
+    reaches Wi-Fi or 4G and can finally push the high-resolution photo it has
+    been holding in its local SQLite queue. Keyed on readable_id — the
+    short id from the SMS payload — because that is the only identifier the
+    phone has; it never learned the server-side UUID.
+    """
+    from sqlalchemy import select
+
+    incident = (
+        await db.execute(select(Incident).where(Incident.readable_id == readable_id))
+    ).scalar_one_or_none()
+    if incident is None:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"No incident with id {readable_id}")
+
+    os.makedirs(settings.UPLOAD_DIR, exist_ok=True)
+    ext = os.path.splitext(image.filename or "")[1] or ".jpg"
+    filename = f"{uuid_lib.uuid4().hex}{ext}"
+    filepath = os.path.join(settings.UPLOAD_DIR, filename)
+    async with aiofiles.open(filepath, "wb") as f:
+        await f.write(await image.read())
+
+    incident.image_url = f"/uploads/{filename}"
+    await db.commit()
+
+    await manager.broadcast(
+        {
+            "event": "incident_image_synced",
+            "data": {"readable_id": readable_id, "image_url": incident.image_url},
+        }
+    )
+
+    return IncidentImageSyncResponse(readable_id=readable_id, image_url=incident.image_url)
