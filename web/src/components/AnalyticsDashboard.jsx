@@ -19,7 +19,8 @@
  *  └──────────────────────────────────────────────────────────────────────────┘
  *
  * Data: /api/v1/dashboard/* endpoints via useAnalytics (30s polling).
- * Spike chart uses a seeded synthesised series — no time-series endpoint exists.
+ * Spike chart is bucketed from the real reroute-audit events, not synthesised —
+ * see buildSpikeSeriesFromAudit.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useAnalytics } from '../hooks/useAnalytics';
@@ -38,8 +39,12 @@ export function AnalyticsDashboard() {
 
   const [query, setQuery] = useState('');
 
-  // Build spike series once on mount — seeded RNG so it stays stable.
-  const spike = useMemo(() => buildSpikeSeries(), []);
+  // Recomputed whenever the audit refreshes (30s poll), so the chart tracks
+  // real reroute activity instead of being fixed at mount time.
+  const spike = useMemo(
+    () => buildSpikeSeriesFromAudit(rerouteAudit?.events, rerouteAudit?.lookback_hours),
+    [rerouteAudit],
+  );
 
   // ── Loading / error states ────────────────────────────────────────────────
   if (loading && !consignmentState) {
@@ -299,7 +304,14 @@ export function AnalyticsDashboard() {
                   <span className="ops-tag ops-tag--neutral">Last 24h</span>
                 </div>
               </div>
-              <SpikeAreaChart labels={spike.labels} series={spike.series} />
+              {spike.empty ? (
+                <div className="ops-empty ops-empty--chart">
+                  No reroute delay recorded in this window — the delay history
+                  fills in as trips reroute.
+                </div>
+              ) : (
+                <SpikeAreaChart labels={spike.labels} series={spike.series} />
+              )}
             </section>
           </div>
 
@@ -1014,37 +1026,64 @@ function shortTime(iso) {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
-function mulberry32(a) {
-  return function () {
-    a |= 0;
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
-/** Synthesised district delay series — 12 two-hour buckets across the last 24h. */
-function buildSpikeSeries() {
-  const rand = mulberry32(20260902);
+/**
+ * Real district delay series, bucketed from the reroute audit's actual
+ * events — replaces a previous version that plotted a seeded random walk
+ * under hardcoded district names ("Imphal Corridor", "Silchar", "Guwahati")
+ * that do not correspond to any district in the current fleet. A chart with
+ * invented numbers under real-looking axis labels is worse than no chart.
+ *
+ * Buckets into 2-hour windows across the lookback window, one series per
+ * origin district — the top three by total delay, so a district that never
+ * shows up in the audit never appears as a flat fabricated line either.
+ */
+const SPIKE_COLORS = ['#ff5b22', '#ffffff', '#9ca3af'];
+
+function buildSpikeSeriesFromAudit(events, lookbackHours = 24) {
+  const bucketCount = Math.max(1, Math.round(lookbackHours / 2));
   const now = new Date();
   const labels = [];
-  for (let i = 11; i >= 0; i--) {
+  const bucketStarts = [];
+  for (let i = bucketCount - 1; i >= 0; i--) {
     const d = new Date(now.getTime() - i * 2 * 3600 * 1000);
     labels.push(`${String(d.getHours()).padStart(2, '0')}:00`);
+    bucketStarts.push(now.getTime() - (i + 1) * 2 * 3600 * 1000);
   }
-  const mk = (base, amp, spikeAt, spikeMag) =>
-    labels.map((_, i) => {
-      let v = base + Math.sin(i / 1.7) * amp + (rand() - 0.5) * amp;
-      if (i >= spikeAt) v += spikeMag * ((i - spikeAt + 1) / (12 - spikeAt));
-      return Math.max(0, Math.round(v));
-    });
-  return {
-    labels,
-    series: [
-      { key: 'Imphal Corridor', color: '#ff5b22', primary: true, data: mk(26, 9, 7, 44) },
-      { key: 'Silchar',         color: '#ffffff',  data: mk(17, 6, 8, 12) },
-      { key: 'Guwahati',        color: '#9ca3af',  data: mk(11, 5, 9, 6) },
-    ],
-  };
+
+  if (!events || events.length === 0) {
+    return { labels, series: [], empty: true };
+  }
+
+  // Total delay per origin, to pick which districts earn a line.
+  const totalsByOrigin = new Map();
+  for (const evt of events) {
+    const origin = evt.origin || 'Unknown';
+    totalsByOrigin.set(origin, (totalsByOrigin.get(origin) || 0) + Math.abs(evt.delay_minutes || 0));
+  }
+  const topOrigins = [...totalsByOrigin.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([origin]) => origin);
+
+  const series = topOrigins.map((origin, idx) => {
+    const data = new Array(bucketCount).fill(0);
+    for (const evt of events) {
+      if (evt.origin !== origin || !evt.created_at) continue;
+      const t = new Date(evt.created_at).getTime();
+      const bucket = bucketStarts.findIndex((start, i) => {
+        const end = i < bucketCount - 1 ? bucketStarts[i + 1] : now.getTime();
+        return t >= start && t < end;
+      });
+      if (bucket >= 0) data[bucket] += Math.abs(evt.delay_minutes || 0);
+    }
+    return {
+      key: origin,
+      color: SPIKE_COLORS[idx] || '#9ca3af',
+      primary: idx === 0,
+      data: data.map((v) => Math.round(v)),
+    };
+  });
+
+  return { labels, series, empty: series.every((s) => s.data.every((v) => v === 0)) };
 }

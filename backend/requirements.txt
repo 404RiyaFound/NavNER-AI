@@ -24,3 +24,4 @@ shapely>=2.1.2
 # Stage 4 — Alert Dispatch & Cloud Integration
 boto3>=1.34
 alembic>=1.13,<2.0
+twilio>=9.0,<10.0  # SMS webhook signature validation (issue #74)

@@ -320,3 +320,10 @@ class GovtTransitLogResponse(BaseModel):
     total_reroutes: int
     total_delay_minutes: int
     vehicles: list[GovtTransitVehicle]
+
+
+class IncidentImageSyncResponse(BaseModel):
+    """Response for PATCH /api/v1/incidents/{readable_id}/image."""
+
+    readable_id: str
+    image_url: str

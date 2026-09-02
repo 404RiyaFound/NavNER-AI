@@ -17,6 +17,7 @@ from app.routers import (
     incidents,
     map_state,
     routing,
+    sms,
     telemetry,
 )
 from app.scheduler import start_scheduler, stop_scheduler
@@ -89,6 +90,7 @@ app.include_router(analytics.router)
 app.include_router(routing.router)
 app.include_router(dashboard.router)
 app.include_router(govt.router)
+app.include_router(sms.router)
 
 
 # ── WebSocket endpoint ─────────────────────────────────────────────────────────

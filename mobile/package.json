@@ -11,7 +11,9 @@
     "expo-status-bar": "~57.0.1",
     "react": "19.1.0",
     "react-native": "0.81.5",
-    "react-native-maps": "^1.20.1"
+    "react-native-maps": "^1.20.1",
+    "expo-sqlite": "~16.0.8",
+    "expo-sms": "~14.0.7"
   },
   "scripts": {
     "start": "expo start",
