@@ -2643,4 +2643,133 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* Positron style uses white background — no override needed, it matches
    the dark overlay controls because the map area is its own canvas. */
-
+
+/* ── Report Incident modal (issue #68 §2) ─────────────────────────────────── */
+.modal-backdrop {
+  position: fixed; inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: grid; place-items: center;
+  z-index: 200;
+  backdrop-filter: blur(2px);
+}
+.report-incident-modal {
+  width: min(440px, 92vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--bg-card);
+  border: 1px solid var(--border-active);
+  border-radius: 16px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.report-incident-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 16px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.report-incident-head .modal-close {
+  background: none; border: none;
+  color: var(--text-secondary);
+  font-size: 20px; line-height: 1; cursor: pointer;
+}
+.report-incident-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.report-incident-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.report-incident-field { display: flex; flex-direction: column; gap: 5px; }
+.report-incident-field label {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.4px; color: var(--text-muted);
+}
+.report-incident-field select,
+.report-incident-field input,
+.report-incident-field textarea {
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: var(--text-primary);
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+  resize: vertical;
+}
+.report-incident-field select:focus,
+.report-incident-field input:focus,
+.report-incident-field textarea:focus {
+  outline: none; border-color: var(--orange);
+}
+.report-incident-hint { font-size: 11px; color: var(--text-muted); margin: -6px 0 0; }
+.report-incident-error {
+  background: var(--red-glow);
+  border: 1px solid var(--red);
+  color: #fecaca;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.report-incident-dropzone {
+  border: 1.5px dashed rgba(249, 115, 22, 0.35);
+  border-radius: 12px;
+  background: var(--orange-subtle);
+  min-height: 100px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  overflow: hidden;
+}
+.report-incident-dropzone.drag-over { border-color: var(--orange); background: rgba(249, 115, 22, 0.2); }
+.report-incident-dropzone.has-photo { padding: 0; border-style: solid; }
+.report-incident-dropzone-icon { font-size: 22px; opacity: 0.7; }
+.report-incident-preview { width: 100%; max-height: 160px; object-fit: cover; }
+.report-incident-foot {
+  display: flex; justify-content: flex-end; gap: 10px;
+  margin-top: 4px;
+}
+.govt-btn-secondary-like {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: var(--text-secondary);
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.report-incident-submit {
+  background: var(--orange);
+  border: none;
+  color: #1a1a1a;
+  font-weight: 700;
+  border-radius: 8px;
+  padding: 8px 18px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.report-incident-submit:hover { background: var(--orange-dark); }
+.report-incident-submit:disabled,
+.govt-btn-secondary-like:disabled { opacity: 0.6; cursor: default; }
+
+/* Incident row additions: photo thumbnail + satellite-pending badge */
+.fleet-incident-thumb {
+  width: 32px; height: 32px; border-radius: 6px;
+  object-fit: cover; flex-shrink: 0;
+}
+.fleet-incident-pending-badge {
+  font-size: 9px; font-weight: 700;
+  color: var(--orange);
+  background: var(--orange-subtle);
+  border-radius: 5px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+.fleet-incident-add-btn {
+  background: var(--orange-subtle);
+  border: 1px solid var(--border-active);
+  color: var(--orange);
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.fleet-incident-add-btn:hover { background: rgba(249, 115, 22, 0.22); }

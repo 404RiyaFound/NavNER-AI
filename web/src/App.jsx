@@ -66,7 +66,14 @@ function App() {
       }
       case 'new_incident': {
         const newIncident = message.data;
-        setIncidents(prev => [newIncident, ...prev]);
+        // Guards against a duplicate: the incident this dashboard's own
+        // report-modal submission just created arrives back over this same
+        // broadcast — POST /api/v1/incident triggers it too — so without this
+        // check submitting a report double-added the row (found live, via
+        // React's duplicate-key warning, while testing issue #68).
+        setIncidents(prev =>
+          prev.some(inc => inc.id === newIncident.id) ? prev : [newIncident, ...prev]
+        );
         break;
       }
       case 'risk_update': {
@@ -188,6 +195,7 @@ function App() {
             onSelectTrip={setSelectedTripId}
             incidents={incidents}
             onIncidentFlyTo={handleFlyTo}
+            mapCenter={mapInstance ? mapInstance.getCenter() : null}
           />
 
           {/* CENTER: Full map with 3D perspective */}

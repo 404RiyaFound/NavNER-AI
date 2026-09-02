@@ -4,6 +4,7 @@
  * Incident feed embedded below
  */
 import { useState, useMemo } from 'react';
+import { ReportIncidentModal } from './ReportIncidentModal';
 
 const COMMODITY_ICONS = {
   MEDICINE: '💊',
@@ -41,9 +42,11 @@ export function FleetSideDrawer({
   onSelectTrip,
   incidents = [],
   onIncidentFlyTo,
+  mapCenter,
 }) {
   const [search, setSearch] = useState('');
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [showReportModal, setShowReportModal] = useState(false);
 
   const sortedTrips = useMemo(() => {
     if (!fleetData?.active_trips) return [];
@@ -223,29 +226,62 @@ export function FleetSideDrawer({
       </div>
 
       {/* Incident Feed — embedded below */}
-      {incidents.length > 0 && (
-        <div className="fleet-incident-section">
-          <div className="fleet-incident-section-title">
-            ⚠️ Active Incidents
-            <span className="panel-badge">{incidents.length}</span>
-          </div>
-          <div className="fleet-incident-list">
-            {incidents.slice(0, 4).map((inc, i) => (
-              <div
-                key={inc.id}
-                className="fleet-incident-row"
-                onClick={() => onIncidentFlyTo?.(inc.lng, inc.lat)}
-              >
-                <span className="fleet-incident-emoji">{INCIDENT_EMOJI[inc.type] || '⚠️'}</span>
-                <div className="fleet-incident-info">
-                  <div className="fleet-incident-type">{(inc.type || '').replace(/_/g, ' ')}</div>
-                  <div className="fleet-incident-time">{timeAgo(inc.created_at)}</div>
-                </div>
-                <span className={`fleet-incident-dot ${inc.status}`}></span>
-              </div>
-            ))}
-          </div>
+      <div className="fleet-incident-section">
+        <div className="fleet-incident-section-title">
+          ⚠️ Active Incidents
+          {incidents.length > 0 && <span className="panel-badge">{incidents.length}</span>}
+          <button
+            type="button"
+            className="fleet-incident-add-btn"
+            onClick={() => setShowReportModal(true)}
+            title="Report an incident received by radio, phone, or another channel"
+          >
+            + Report
+          </button>
         </div>
+        {incidents.length > 0 && (
+          <div className="fleet-incident-list">
+            {incidents.slice(0, 4).map((inc) => {
+              // The satellite-SMS bridge (#74) writes this exact sentinel while
+              // the photo is still in flight, so it must be distinguished from
+              // an app report that simply has no photo — showing a blank
+              // thumbnail for both would read as "no evidence" for a report
+              // that is actually still arriving.
+              const imagePending = inc.image_url === 'PENDING_NETWORK_SYNC';
+              const hasRealImage = inc.image_url && !imagePending;
+              return (
+                <div
+                  key={inc.id}
+                  className="fleet-incident-row"
+                  onClick={() => onIncidentFlyTo?.(inc.lng, inc.lat)}
+                >
+                  {hasRealImage ? (
+                    <img src={inc.image_url} alt="" className="fleet-incident-thumb" />
+                  ) : (
+                    <span className="fleet-incident-emoji">{INCIDENT_EMOJI[inc.type] || '⚠️'}</span>
+                  )}
+                  <div className="fleet-incident-info">
+                    <div className="fleet-incident-type">{(inc.type || '').replace(/_/g, ' ')}</div>
+                    <div className="fleet-incident-time">{timeAgo(inc.created_at)}</div>
+                  </div>
+                  {imagePending && (
+                    <span className="fleet-incident-pending-badge" title="Reported via satellite SMS — photo not yet synced">
+                      📡 pending
+                    </span>
+                  )}
+                  <span className={`fleet-incident-dot ${inc.status}`}></span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {showReportModal && (
+        <ReportIncidentModal
+          mapCenter={mapCenter}
+          onClose={() => setShowReportModal(false)}
+        />
       )}
     </aside>
   );

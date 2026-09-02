@@ -59,7 +59,7 @@ async def get_map_state(db: AsyncSession = Depends(get_db)):
         Incident.status,
         Incident.reported_by,
         Incident.created_at,
-    ).where(Incident.status != IncidentStatus.resolved)
+    ).where(Incident.status != IncidentStatus.resolved).order_by(Incident.created_at.desc())
 
     incident_rows = (await db.execute(incident_stmt)).all()
 
