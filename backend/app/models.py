@@ -119,6 +119,20 @@ class User(Base):
     incidents = relationship("Incident", back_populates="reporter")
 
 
+class VehicleClass(str, enum.Enum):
+    """Government provisioning classes (issue #65 §3.1).
+
+    Distinct from VehicleType, which describes the chassis the dashboard draws.
+    This is the procurement capability class a fleet manager registers against.
+    """
+
+    HEAVY_TRUCK = "HEAVY_TRUCK"
+    PICKUP_4X4 = "PICKUP_4X4"
+    AMBULANCE = "AMBULANCE"
+    NDRF_BOAT = "NDRF_BOAT"
+    UTILITY = "UTILITY"
+
+
 class Vehicle(Base):
     __tablename__ = "vehicles"
 
@@ -130,6 +144,15 @@ class Vehicle(Base):
     organization = Column(String(100), nullable=True)
     current_location = Column(Geometry("POINT", srid=4326), nullable=True)
     last_ping = Column(DateTime(timezone=True), nullable=True)
+
+    # ── Government provisioning fields (issue #65 §3.1) ───────────────────
+    # All nullable: vehicles seeded or ingested outside the fleet-manager
+    # portal have no provisioning record, and the dashboard must not require
+    # one to render them.
+    vehicle_class = Column(Enum(VehicleClass), nullable=True)
+    cargo_capacity_tons = Column(Float, nullable=True)
+    depot_origin = Column(String(120), nullable=True)
+    target_district = Column(String(120), nullable=True)
 
     # Relationships
     telemetry_records = relationship("Telemetry", back_populates="vehicle")

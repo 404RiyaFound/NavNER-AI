@@ -7,7 +7,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, Field
 
-from app.models import IncidentStatus, IncidentType, VehicleStatus, VehicleType
+from app.models import IncidentStatus, IncidentType, VehicleStatus, VehicleType, VehicleClass
 
 
 # ── Telemetry ──────────────────────────────────────────────────────────────────
@@ -216,3 +216,60 @@ class FleetStatusResponse(BaseModel):
     emergency_count: int
 
 
+# ── Government Fleet Manager (issue #65) ──────────────────────────────────────
+
+
+class GovtFleetRegisterRequest(BaseModel):
+    """Provisioning form submitted by a government dispatcher (§3.1)."""
+
+    license_plate: str = Field(..., min_length=4, max_length=20)
+    vehicle_class: VehicleClass
+    cargo_capacity_tons: float = Field(..., gt=0, le=100)
+    depot_origin: str = Field(..., min_length=2, max_length=120)
+    target_district: str = Field(..., min_length=2, max_length=120)
+    organization: str | None = Field(None, max_length=100)
+    name: str | None = Field(None, max_length=120)
+
+
+class GovtFleetVehicle(BaseModel):
+    """One vehicle as the NavNER dashboard consumes it."""
+
+    vid: str
+    type: str
+    commodity: str | None = None
+    origin: str | None = None
+    destination: str | None = None
+    current_coords: dict[str, float] | None = None
+    status: str
+    local_pickup_linked: str | None = None
+    cargo_capacity_tons: float | None = None
+    target_district: str | None = None
+
+
+class GovtActiveFleetResponse(BaseModel):
+    """Payload for GET /api/v1/govt/active-fleet (§3.3)."""
+
+    fleet_count: int
+    timestamp: datetime
+    vehicles: list[GovtFleetVehicle]
+
+
+class GovtKpiBlock(BaseModel):
+    """One of the five VAHAN-style KPI blocks, with its breakdown table."""
+
+    key: str
+    label: str
+    value: int
+    # Rows render as the dense table beneath each block. `delta_pct` is None
+    # where there is no prior period to compare against, rather than 0 — the
+    # dashboard must not draw a 0% arrow for "unknown".
+    rows: list[dict[str, object]]
+
+
+class GovtDashboardSummary(BaseModel):
+    """Everything the fleet-manager landing page needs in one call."""
+
+    generated_at: datetime
+    blocks: list[GovtKpiBlock]
+    deployment_by_district: list[dict[str, object]]
+    commodities_in_transit: list[dict[str, object]]
