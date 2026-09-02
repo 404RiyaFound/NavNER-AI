@@ -26,21 +26,23 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
-# PostGIS creates and owns these; they are not part of our models. Without this
-# filter, --autogenerate proposes dropping spatial_ref_sys on every run, which
-# both pollutes real migrations and makes an automated drift check impossible.
-POSTGIS_OWNED_TABLES = {
-    "spatial_ref_sys",
-    "geography_columns",
-    "geometry_columns",
-    "raster_columns",
-    "raster_overviews",
-}
-
-
 def include_object(object_, name, type_, reflected, compare_to):
-    """Exclude PostGIS-managed objects from autogenerate comparison."""
-    if type_ == "table" and name in POSTGIS_OWNED_TABLES:
+    """Limit autogenerate to tables this application actually owns.
+
+    The PostGIS extension installs a large amount of its own schema —
+    spatial_ref_sys in public, plus everything under the tiger and topology
+    schemas (direction_lookup, layer, and dozens more). None of it is in our
+    models, so an unfiltered --autogenerate proposes dropping all of it, which
+    both pollutes hand-written revisions and makes an automated drift check
+    impossible.
+
+    Filtering on membership of Base.metadata rather than an explicit denylist
+    means new PostGIS objects, or a new extension, never reintroduce the noise.
+    The trade-off is that dropping one of our own tables from the models is not
+    flagged as drift — an acceptable blind spot, since removing a table is a
+    deliberate act that comes with its own migration.
+    """
+    if type_ == "table" and reflected and name not in target_metadata.tables:
         return False
     return True
 

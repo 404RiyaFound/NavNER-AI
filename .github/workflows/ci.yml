@@ -81,11 +81,31 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Apply migrations
+      - name: Build the schema the way the app does, then adopt it
         working-directory: backend
         env:
           DATABASE_URL: postgresql+psycopg://navner:navner_secret@localhost:5432/navner_ai
-        run: alembic upgrade head
+        # `0001_baseline` is intentionally a no-op: Alembic was adopted against
+        # databases that create_all had already built, so it cannot construct a
+        # schema from nothing. CI therefore reproduces the real startup path —
+        # create_all builds the tables, Alembic is stamped to head — and only
+        # then checks for drift. Doing `upgrade head` alone would leave an empty
+        # database and autogenerate would propose creating the entire schema.
+        run: |
+          python - <<'PY'
+          import asyncio
+          from app.database import engine
+          from app.models import Base
+
+          async def main():
+              async with engine.begin() as conn:
+                  await conn.run_sync(Base.metadata.create_all)
+              await engine.dispose()
+
+          asyncio.run(main())
+          print("schema created via create_all")
+          PY
+          alembic stamp head
 
       - name: Fail if the models have drifted from the migrations
         working-directory: backend
