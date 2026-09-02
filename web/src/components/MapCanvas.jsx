@@ -1,23 +1,42 @@
 /**
- * MapCanvas — Full-screen MapLibre GL with 3D Uber-style map
+ * MapCanvas — Full-screen MapLibre GL, 2D vector navigation map
  *
  * Features:
- * - Pitch 45° Uber-style 3D perspective
+ * - OpenFreeMap positron vector basemap (clean 2D, road labels, no API key)
  * - 3D truck markers with commodity color rings + priority pulse
- * - Click vehicle → zoom into street-level 3D view (pitch 60°)
- * - Animated route travel dot
+ * - Click vehicle → zoom into street-level view (flat, labels readable)
  * - Road block / calamity warning markers
- * - Street-level detail tiles at high zoom
+ * - POI layer suppression (logistics-only view)
  */
 import { useEffect, useRef, useCallback, useState } from 'react';
 import * as maplibregl from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { TacticalWeatherOverlay } from './TacticalWeatherOverlay';
 
-// Basemap raster tiles. Can be overridden via environment variables for deployment.
-const MAP_TILE_URL =
-  import.meta.env.VITE_MAP_TILE_URL ||
-  'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}';
+// OpenFreeMap positron: free, no API key, clean 2D navigation style.
+// Override via VITE_MAP_STYLE_URL env var for custom deployments.
+const MAP_STYLE_URL =
+  import.meta.env.VITE_MAP_STYLE_URL ||
+  'https://tiles.openfreemap.org/styles/positron';
+
+// Retail POI pins are clutter on a logistics map. Road labels, names,
+// and geometry are all kept — only POI / house-number layers are hidden.
+const POI_LAYER_PATTERN = /^poi|housenum/i;
+
+// Selecting a trip should land at a zoom where roads are legible.
+// ~zoom 7 on NE India frames a route but the road itself is not drawn yet.
+const ROUTE_VIEW_MIN_ZOOM = 9.5;
+
+// [[lng, lat], ...] -> [[minLng, minLat], [maxLng, maxLat]] for fitBounds.
+function routeBounds(coordinates) {
+  return coordinates.reduce(
+    (b, [lng, lat]) => [
+      [Math.min(b[0][0], lng), Math.min(b[0][1], lat)],
+      [Math.max(b[1][0], lng), Math.max(b[1][1], lat)],
+    ],
+    [[Infinity, Infinity], [-Infinity, -Infinity]],
+  );
+}
 
 const COMMODITY_COLORS = {
   MEDICINE:    '#ef4444',  // red — emergency pharma
@@ -56,7 +75,7 @@ function createTruckSVG(color = '#f97316') {
   </svg>`;
 }
 
-export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, selectedTripVehicle, fleetData }) {
+export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, onVehicleClick, selectedTripVehicle, selectedTripRoute, fleetData }) {
   const mapContainer = useRef(null);
   const mapRef       = useRef(null);
   const vehicleMarkersRef  = useRef({});
@@ -65,89 +84,56 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, se
   const travelAnimRef      = useRef(null);
   const [mapInstance, setMapInstance] = useState(null);
 
+  // Held in a ref so a new callback identity does not tear down and rebuild
+  // every marker on each render.
+  const onVehicleClickRef  = useRef(onVehicleClick);
+
+  useEffect(() => {
+    onVehicleClickRef.current = onVehicleClick;
+  }, [onVehicleClick]);
+
   // ── Initialize map ─────────────────────────────────────────────
   useEffect(() => {
     if (mapRef.current) return;
 
     const map = new maplibregl.Map({
       container: mapContainer.current,
-      style: {
-        version: 8,
-        sources: {
-          'google-satellite': {
-            type: 'raster',
-            tiles: [MAP_TILE_URL],
-            tileSize: 256,
-            attribution: '&copy; Google',
-          },
-        },
-        layers: [{
-          id: 'google-satellite-layer',
-          type: 'raster',
-          source: 'google-satellite',
-          minzoom: 0,
-          maxzoom: 19,
-        }],
-      },
-      center: [91.74, 26.15], // Centered directly on Guwahati hazard cluster
-      zoom: 11.5, // High zoom needed to clearly see H3 resolution 7 grid cells
-      pitch: 45,
-      bearing: -12,
+      // OpenFreeMap positron vector style — clean 2D nav map, free, no key needed.
+      // Shows real road geometry, street names, and district labels.
+      style: MAP_STYLE_URL,
+      center: [93.0, 25.5], // Broader NER view: shows Assam → Manipur corridor
+      zoom: 7,              // Regional zoom — entire NE road network visible
+      pitch: 0,             // Flat 2D — vector road labels stay legible
+      bearing: 0,
       minZoom: 4,
-      maxZoom: 18,
+      maxZoom: 19,
     });
 
-    map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
+    map.addControl(new maplibregl.NavigationControl({ showCompass: true }), 'bottom-right');
     map.addControl(new maplibregl.ScaleControl({ maxWidth: 140 }), 'bottom-left');
 
     mapRef.current = map;
     map.on('load', () => {
       setMapInstance(map);
+
+      // Suppress POI clutter so only routing-relevant labels remain.
+      for (const layer of map.getStyle().layers ?? []) {
+        if (POI_LAYER_PATTERN.test(layer.id)) {
+          try {
+            map.setLayoutProperty(layer.id, 'visibility', 'none');
+          } catch {
+            // Some layer types have no visibility property — skip silently.
+          }
+        }
+      }
       onMapReady?.(map);
+    });
 
-      // --- DEBUG TEST: Direct MapLibre API injection ---
-      fetch('http://localhost:8000/api/v1/analytics/hazard-map')
-        .then(r => r.json())
-        .then(data => {
-          // Normalise depth
-          const normalizedFeatures = data.features.map(f => {
-            let depth = 0;
-            let curr = f.geometry.coordinates;
-            while (Array.isArray(curr)) { depth++; curr = curr[0]; }
-            
-            const newF = { ...f };
-            if (depth === 3 && f.geometry.type === 'MultiPolygon') newF.geometry.type = 'Polygon';
-            if (depth === 4 && f.geometry.type === 'Polygon') newF.geometry.type = 'MultiPolygon';
-            return newF;
-          });
-
-          map.addSource('debug-hazard-source', {
-            type: 'geojson',
-            data: { type: 'FeatureCollection', features: normalizedFeatures }
-          });
-          map.addLayer({
-            id: 'debug-hazard-fill',
-            type: 'fill',
-            source: 'debug-hazard-source',
-            paint: { 'fill-color': '#ffeb3b', 'fill-opacity': 0.7 }
-          });
-          map.addLayer({
-            id: 'debug-hazard-line',
-            type: 'line',
-            source: 'debug-hazard-source',
-            paint: { 'line-color': '#ff0000', 'line-width': 3 }
-          });
-          console.log('[DEBUG] Direct MapLibre GeoJSON injected!', normalizedFeatures.length, 'features');
-        })
-        .catch(e => console.error('[DEBUG] Failed to inject GeoJSON directly:', e));
-    }); return () => {
+    return () => {
       map.remove();
       mapRef.current = null;
-      // map.remove() destroys every Marker's DOM, so the caches tracking them
-      // must be dropped with it. Without this, an effect re-run on the same
-      // component instance — which StrictMode does on every mount in dev — finds
-      // stale Marker objects in the cache, takes the "already exists" path, and
-      // never re-adds them to the new map. Net effect: no markers at all in dev.
+      // map.remove() destroys every Marker's DOM; drop the caches so StrictMode
+      // double-mount in dev doesn't pick up stale objects and skip re-adding markers.
       vehicleMarkersRef.current = {};
       incidentMarkersRef.current = {};
     };
@@ -221,6 +207,12 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, se
           </div>
         `);
 
+      // Clicking the truck selects its trip, which highlights its route and opens
+      // the detail panel — the same outcome as clicking its sidebar card.
+      el.addEventListener('click', () => {
+        onVehicleClickRef.current?.(vehicle);
+      });
+
       const marker = new maplibregl.Marker({ element: el })
         .setLngLat([vehicle.lng, vehicle.lat])
         .setPopup(popup)
@@ -270,24 +262,45 @@ export function MapCanvas({ vehicles, incidents, onIncidentClick, onMapReady, se
     });
   }, [incidents, onIncidentClick]);
 
-  // ── Zoom to selected vehicle / trip route ───────────────────────
+  // ── Fly to selected vehicle, else frame its route ──────────
   useEffect(() => {
     const map = mapRef.current;
-    if (!map || !selectedTripVehicle) return;
+    if (!map) return;
 
     const v = selectedTripVehicle;
-    if (v.lat == null || v.lng == null) return;
+    
+    // 1. If we have the vehicle's live coordinates, fly to the truck at street level
+    if (v && v.lat != null && v.lng != null) {
+      // Flat street-level zoom — vector basemap labels stay readable at pitch 0.
+      // zoom 14 puts the vehicle's block in full detail with road names visible.
+      map.easeTo({
+        center: [v.lng, v.lat],
+        zoom: 14.5, // Slightly closer to emphasize the truck
+        pitch: 0,
+        bearing: 0,
+        duration: 1200,
+        easing: t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
+      });
+      return;
+    }
 
-    // Smooth camera fly to street-level 3D view — Uber style
-    map.easeTo({
-      center: [v.lng, v.lat],
-      zoom: 12,
-      pitch: 55,
-      bearing: -20,
-      duration: 1400,
-      easing: t => t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t,
-    });
-  }, [selectedTripVehicle]);
+    // 2. Fallback: If we only have the route but no live vehicle data, frame the route
+    if (selectedTripRoute?.length > 1) {
+      const bounds = routeBounds(selectedTripRoute);
+      const framed = map.cameraForBounds(bounds, { padding: 50 });
+
+      if (framed) {
+        map.easeTo({
+          center: framed.center,
+          zoom: Math.max(framed.zoom, ROUTE_VIEW_MIN_ZOOM),
+          duration: 1400,
+          essential: true,
+        });
+      } else {
+        map.fitBounds(bounds, { padding: 50, duration: 1400, essential: true });
+      }
+    }
+  }, [selectedTripVehicle, selectedTripRoute]);
 
   // ── Expose flyTo externally ─────────────────────────────────────
   useEffect(() => {

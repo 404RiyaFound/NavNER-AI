@@ -4,7 +4,14 @@
  */
 import { useEffect, useRef, useState, useCallback } from 'react';
 
-const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000/ws';
+// Derive the WebSocket URL from the current page origin so the connection goes
+// through the Vite dev proxy on whatever port Vite picked. VITE_WS_URL can
+// override this in production (e.g. wss://api.navner.gov.in/ws).
+function getWsUrl() {
+  if (import.meta.env.VITE_WS_URL) return import.meta.env.VITE_WS_URL;
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/ws`;
+}
 const RECONNECT_INTERVAL = 3000;
 
 export function useWebSocket(onMessage) {
@@ -21,7 +28,7 @@ export function useWebSocket(onMessage) {
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    const ws = new WebSocket(WS_URL);
+    const ws = new WebSocket(getWsUrl());
 
     ws.onopen = () => {
       console.log('[WS] Connected');

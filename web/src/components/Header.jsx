@@ -5,9 +5,9 @@ export function Header({ vehicleCount, incidentCount, isConnected, fleetData, ac
   return (
     <header className="header">
       <div className="header-brand">
-        <div className="header-brand-icon">N</div>
+        <img src="/favicon.svg" alt="NavNER-AI" style={{ width: 36, height: 36 }} />
         <div>
-          <div className="header-title">NavNER Command Center</div>
+          <div className="header-title">NavNER·AI</div>
           <div className="header-subtitle">NER Logistics Intelligence</div>
         </div>
       </div>

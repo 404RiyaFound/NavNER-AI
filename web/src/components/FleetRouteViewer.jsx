@@ -1,135 +1,97 @@
 /**
- * FleetRouteViewer — Renders original + rerouted route paths on the map
- * Orange active route (logistics mockup style), animated dashes for rerouted.
- * Stage 3: Multi-Route Path Renderer
+ * FleetRouteViewer — Renders the BLOCKED (original) route overlay on the map.
+ *
+ * The colored active/current route is rendered by HazardRouteColorizer.
+ * This component's sole job is to draw the dashed red "blocked path" line
+ * when a trip has been REROUTED — clearly showing what road segment is
+ * avoided. This matches the reference image from Issue #63.
  */
 import { useEffect, useRef } from 'react';
 
-const ROUTE_SOURCE_PREFIX = 'fleet-route-';
-const ORIGINAL_LAYER_PREFIX = 'fleet-original-';
-const ACTIVE_LAYER_PREFIX = 'fleet-active-';
-const ACTIVE_CASING_PREFIX = 'fleet-active-casing-';
+const BLOCKED_SOURCE_PREFIX = 'frv-blocked-source-';
+const BLOCKED_LAYER_PREFIX  = 'frv-blocked-layer-';
+const BLOCKED_CASING_PREFIX = 'frv-blocked-casing-';
 
 export function FleetRouteViewer({ map, fleetData, selectedTripId }) {
-  const layerIdsRef = useRef(new Set());
+  const layerIdsRef  = useRef(new Set());
   const sourceIdsRef = useRef(new Set());
 
-  // Render route lines on the map
   useEffect(() => {
     if (!map || !fleetData?.active_trips) return;
 
-    const renderRoutes = () => {
-      // Clean up old layers/sources
-      for (const layerId of layerIdsRef.current) {
-        try { if (map.getLayer(layerId)) map.removeLayer(layerId); } catch(_) {}
+    const renderBlocked = () => {
+      // Clean up previous layers
+      for (const id of layerIdsRef.current) {
+        try { if (map.getLayer(id)) map.removeLayer(id); } catch (_) {}
       }
-      for (const sourceId of sourceIdsRef.current) {
-        try { if (map.getSource(sourceId)) map.removeSource(sourceId); } catch(_) {}
+      for (const id of sourceIdsRef.current) {
+        try { if (map.getSource(id)) map.removeSource(id); } catch (_) {}
       }
       layerIdsRef.current.clear();
       sourceIdsRef.current.clear();
 
-      fleetData.active_trips.forEach((trip) => {
-        const tripKey = trip.trip_id.slice(0, 8);
+      fleetData.active_trips.forEach(trip => {
+        // Only render the blocked route for REROUTED trips that have an original route
+        if (trip.status !== 'REROUTED') return;
+        if (!trip.original_route?.coordinates?.length || trip.original_route.coordinates.length < 2) return;
+
+        const tripKey    = trip.trip_id.slice(0, 8);
         const isSelected = trip.trip_id === selectedTripId;
-        const isRerouted = trip.status === 'REROUTED';
+        const dimmed     = Boolean(selectedTripId) && !isSelected;
+        const opacity    = dimmed ? 0.04 : (isSelected ? 0.65 : 0.22);
+        const lineWidth  = isSelected ? 4 : 2;
 
-        // Original route — dashed dim red line
-        if (trip.original_route && trip.original_route.coordinates?.length > 1) {
-          const origSourceId = `${ROUTE_SOURCE_PREFIX}orig-${tripKey}`;
-          const origLayerId = `${ORIGINAL_LAYER_PREFIX}${tripKey}`;
+        const srcId    = `${BLOCKED_SOURCE_PREFIX}${tripKey}`;
+        const casingId = `${BLOCKED_CASING_PREFIX}${tripKey}`;
+        const layerId  = `${BLOCKED_LAYER_PREFIX}${tripKey}`;
 
-          map.addSource(origSourceId, {
-            type: 'geojson',
-            data: {
-              type: 'Feature',
-              geometry: { type: 'LineString', coordinates: trip.original_route.coordinates },
+        map.addSource(srcId, {
+          type: 'geojson',
+          data: {
+            type: 'Feature',
+            properties: { status: 'BLOCKED' },
+            geometry: {
+              type: 'LineString',
+              coordinates: trip.original_route.coordinates,
             },
-          });
+          },
+        });
+        sourceIdsRef.current.add(srcId);
 
-          map.addLayer({
-            id: origLayerId,
-            type: 'line',
-            source: origSourceId,
-            paint: {
-              'line-color': '#ef4444',
-              'line-width': isSelected ? 2.5 : 1.5,
-              'line-opacity': isSelected ? 0.5 : 0.2,
-              'line-dasharray': [4, 4],
-            },
-            layout: { 'line-cap': 'round', 'line-join': 'round' },
-          });
+        // Subtle casing so the dashed red stands out from the basemap
+        map.addLayer({
+          id: casingId, type: 'line', source: srcId,
+          paint: {
+            'line-color': '#7f1d1d',
+            'line-width': lineWidth + 3,
+            'line-opacity': opacity * 0.35,
+          },
+          layout: { 'line-cap': 'butt', 'line-join': 'round' },
+        });
+        layerIdsRef.current.add(casingId);
 
-          sourceIdsRef.current.add(origSourceId);
-          layerIdsRef.current.add(origLayerId);
-        }
+        // Dashed red line — signals "this path is blocked / avoided"
+        map.addLayer({
+          id: layerId, type: 'line', source: srcId,
+          paint: {
+            'line-color': '#ef4444',
+            'line-width': lineWidth,
+            'line-opacity': opacity,
+            'line-dasharray': [3, 4],
+          },
+          layout: { 'line-cap': 'butt', 'line-join': 'round' },
+        });
+        layerIdsRef.current.add(layerId);
+      });
+    };
 
-        // Active/current route
-        if (trip.current_route && trip.current_route.coordinates?.length > 1) {
-          const activeSourceId = `${ROUTE_SOURCE_PREFIX}active-${tripKey}`;
-          const activeLayerId = `${ACTIVE_LAYER_PREFIX}${tripKey}`;
-          const casingLayerId = `${ACTIVE_CASING_PREFIX}${tripKey}`;
-
-          map.addSource(activeSourceId, {
-            type: 'geojson',
-            data: {
-              type: 'Feature',
-              geometry: { type: 'LineString', coordinates: trip.current_route.coordinates },
-            },
-          });
-
-          // Casing (halo) layer underneath — gives the thick bordered look
-          map.addLayer({
-            id: casingLayerId,
-            type: 'line',
-            source: activeSourceId,
-            paint: {
-              'line-color': isRerouted ? '#16a34a' : '#ea580c',  // darker green or dark orange
-              'line-width': isSelected ? 10 : 6,
-              'line-opacity': isSelected ? 0.4 : 0.2,
-            },
-            layout: { 'line-cap': 'round', 'line-join': 'round' },
-          });
-
-          // Main colored line
-          // Orange (#f97316) for normal active — logistics mockup style
-          // Green (#22c55e) if rerouted
-          const lineColor = isRerouted ? '#22c55e' : '#f97316';
-
-          map.addLayer({
-            id: activeLayerId,
-            type: 'line',
-            source: activeSourceId,
-            paint: {
-              'line-color': lineColor,
-              'line-width': isSelected ? 6 : 3.5,
-              'line-opacity': isSelected ? 1.0 : 0.55,
-            },
-            layout: { 'line-cap': 'round', 'line-join': 'round' },
-          });
-
-          sourceIdsRef.current.add(activeSourceId);
-          layerIdsRef.current.add(casingLayerId);
-          layerIdsRef.current.add(activeLayerId);
-        }
-    });
-    }; // end renderRoutes
-
-    // Poll until the style is queryable, then add the layers.
-    //
-    // This deliberately does not gate on `map.loaded()`. The map only reaches
-    // this component via onMapReady, which fires inside map.on('load') — so
-    // 'load' has already happened. `map.loaded()` also reports false while any
-    // tiles are still in flight. The previous code read that as "not loaded
-    // yet" and waited on map.once('load', ...) for an event that had already
-    // fired, so no route layer was ever added.
     let cancelled = false;
     let pollTimer = null;
 
     const tryRender = () => {
       if (cancelled) return;
       if (map.isStyleLoaded()) {
-        renderRoutes();
+        renderBlocked();
       } else {
         pollTimer = setTimeout(tryRender, 300);
       }
@@ -140,14 +102,14 @@ export function FleetRouteViewer({ map, fleetData, selectedTripId }) {
     return () => {
       cancelled = true;
       if (pollTimer) clearTimeout(pollTimer);
-      for (const layerId of layerIdsRef.current) {
-        try { if (map.getLayer(layerId)) map.removeLayer(layerId); } catch(_) {}
+      for (const id of layerIdsRef.current) {
+        try { if (map.getLayer(id)) map.removeLayer(id); } catch (_) {}
       }
-      for (const sourceId of sourceIdsRef.current) {
-        try { if (map.getSource(sourceId)) map.removeSource(sourceId); } catch(_) {}
+      for (const id of sourceIdsRef.current) {
+        try { if (map.getSource(id)) map.removeSource(id); } catch (_) {}
       }
     };
   }, [map, fleetData, selectedTripId]);
 
-  return null; // purely map-based rendering
+  return null;
 }
