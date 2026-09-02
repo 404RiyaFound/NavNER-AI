@@ -1,0 +1,137 @@
+name: CI
+
+# Runs the tests and builds that nothing previously ran on a pull request.
+#
+# Deliberately separate from the issue/PR automation workflows: those are
+# advisory (labelling, triage, LLM analysis) and should not fail a PR, while
+# everything here is verification and should.
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# A force-push should not leave the previous run burning a runner.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend — pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run tests
+        working-directory: backend
+        # The suite is database-free: it stubs the upstream calls rather than
+        # standing up PostGIS, so no service container is needed.
+        run: python -m pytest -q
+
+  migrations:
+    name: Backend — migrations match models
+    runs-on: ubuntu-latest
+    # Guards the failure mode behind #37: a model gains a column, no migration
+    # is written, and every existing database silently diverges until something
+    # 500s. Alembic compares the models against a migrated database and fails if
+    # they disagree.
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: navner
+          POSTGRES_PASSWORD: navner_secret
+          POSTGRES_DB: navner_ai
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Apply migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://navner:navner_secret@localhost:5432/navner_ai
+        run: alembic upgrade head
+
+      - name: Fail if the models have drifted from the migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://navner:navner_secret@localhost:5432/navner_ai
+        run: |
+          # --autogenerate against a fully migrated database must produce an
+          # empty revision. Anything else means a model change shipped without
+          # a migration.
+          alembic revision --autogenerate -m "drift check" --rev-id drift_check
+          if grep -qE '^\s+op\.(add|drop|alter|create|rename)_' \
+              migrations/versions/drift_check_drift_check.py; then
+            echo "::error::Models have changed without a migration. Generated operations:"
+            grep -nE '^\s+op\.' migrations/versions/drift_check_drift_check.py
+            exit 1
+          fi
+          echo "No drift — models and migrations agree."
+
+  frontend:
+    name: Frontend — ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [web, fleet-manager]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: ${{ matrix.app }}/package-lock.json
+
+      - name: Install dependencies
+        working-directory: ${{ matrix.app }}
+        run: npm ci
+
+      - name: Lint
+        working-directory: ${{ matrix.app }}
+        # Plain oxlint exits 0 on warnings and non-zero on errors. That is the
+        # gate we want: the repo carries pre-existing warnings, so failing on
+        # them would mean a cleanup before CI could land, while errors should
+        # block immediately. Tighten with --deny-warnings once the count is 0.
+        run: npx oxlint
+
+      - name: Build
+        working-directory: ${{ matrix.app }}
+        run: npm run build

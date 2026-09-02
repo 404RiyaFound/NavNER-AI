@@ -26,6 +26,24 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+# PostGIS creates and owns these; they are not part of our models. Without this
+# filter, --autogenerate proposes dropping spatial_ref_sys on every run, which
+# both pollutes real migrations and makes an automated drift check impossible.
+POSTGIS_OWNED_TABLES = {
+    "spatial_ref_sys",
+    "geography_columns",
+    "geometry_columns",
+    "raster_columns",
+    "raster_overviews",
+}
+
+
+def include_object(object_, name, type_, reflected, compare_to):
+    """Exclude PostGIS-managed objects from autogenerate comparison."""
+    if type_ == "table" and name in POSTGIS_OWNED_TABLES:
+        return False
+    return True
+
 
 def _sync_url() -> str:
     """SQLAlchemy URL with the async driver stripped for migration use."""
@@ -41,6 +59,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
+        include_object=include_object,
     )
     with context.begin_transaction():
         context.run_migrations()
@@ -59,6 +78,7 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
+            include_object=include_object,
         )
         with context.begin_transaction():
             context.run_migrations()
